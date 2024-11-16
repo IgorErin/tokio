@@ -547,24 +547,13 @@ impl Context {
                 continue;
             }
 
-            // We consumed all work in the queues and will start searching for work.
             core.stats.end_processing_scheduled_tasks();
-
-            // There is no more **local** work to process, try to steal work
-            // from other workers.
-            if let Some(task) = core.steal_work(&self.worker) {
-                // Found work, switch back to processing
-                core.stats.start_processing_scheduled_tasks();
-                core = self.run_task(task, core)?;
+            core = if !self.defer.is_empty() {
+                self.park_timeout(core, Some(Duration::from_millis(0)))
             } else {
-                // Wait for work
-                core = if !self.defer.is_empty() {
-                    self.park_timeout(core, Some(Duration::from_millis(0)))
-                } else {
-                    self.park(core)
-                };
-                core.stats.start_processing_scheduled_tasks();
-            }
+                self.park(core)
+            };
+            core.stats.start_processing_scheduled_tasks();
         }
 
         core.pre_shutdown(&self.worker);
@@ -796,6 +785,17 @@ impl Core {
                 return maybe_task;
             }
 
+            // There is no more **local** work to process, try to steal work
+            // from other workers.
+            self.stats.end_processing_scheduled_tasks();
+            let maybe_task = self.steal_work(worker);
+            self.stats.start_processing_scheduled_tasks();
+
+            if maybe_task.is_some() {
+                return maybe_task;
+            }
+
+            // Fallback to global queue
             if worker.inject().is_empty() {
                 return None;
             }
