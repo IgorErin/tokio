@@ -97,12 +97,6 @@ pub(super) struct Worker {
     /// TODO(i.erin) ask about locallity
     group: usize,
 
-    /// TODO(i.erin) comments
-    group_size: usize,
-
-    //TODO(i.erin) move to handle.shared
-    ngroup: usize,
-
     /// Used to hand-off a worker's core to another thread.
     core: AtomicCell<Core>,
 }
@@ -157,7 +151,7 @@ pub(crate) struct Shared {
     /// Per-worker remote state. All other workers have access to this and is
     /// how they communicate between each other.
     ///
-    /// worker group consists of [ngroup * size, (ngroup + 1) * size - 1] remotes
+    /// worker group consists of [worker.group * size, (worker.group + 1) * size - 1] remotes
     /// handler for local communication
     remotes: Box<[Remote]>,
 
@@ -165,6 +159,12 @@ pub(crate) struct Shared {
     ///  1. Submit work to the scheduler while **not** currently on a worker thread.
     ///  2. Submit work to the scheduler when a worker run queue is saturated
     pub(super) injects: Box<[inject::Inject<Arc<Handle>>]>,
+
+    /// TODO(i.erin) only for reading
+    group_size: usize,
+
+    //TODO(i.erin) only for reading
+    ngroup: usize,
 
     /// Coordinates idle workers
     idle: Idle,
@@ -301,6 +301,8 @@ pub(super) fn create(
         shared: Shared {
             remotes: remotes.into_boxed_slice(),
             injects,
+            group_size: size,
+            ngroup,
             idle,
             owned: OwnedTasks::new(size),
             synced: Mutex::new(Synced { idle: idle_synced }),
@@ -324,8 +326,6 @@ pub(super) fn create(
             handle: handle.clone(),
             index: nworker,
             group: nworker / size,
-            group_size: size,
-            ngroup,
             core: AtomicCell::new(Some(core)),
         }));
     }
@@ -862,8 +862,8 @@ impl Core {
             // TODO(i.erin) we may want to find bigger queue
             // or ask user for hot queue
             if !inject.is_empty() {
-                // TODO
-                return self.take_n_from_inject(worker.ngroup, &inject);
+                // TODO(i.erin) split somehow better
+                return self.take_n_from_inject(worker.handle.shared.ngroup, &inject);
             }
         }
 
@@ -887,12 +887,30 @@ impl Core {
                 return maybe_task;
             }
 
-            self.take_n_from_inject(worker.group_size, worker.group_inject())
+            self.take_n_from_inject(worker.handle.shared.group_size, worker.group_inject())
         }
     }
 
     fn next_local_task(&mut self) -> Option<Notified> {
         self.lifo_slot.take().or_else(|| self.run_queue.pop())
+    }
+
+    fn random_siblings(&mut self, worker: &Worker) -> impl Iterator<Item = usize> {
+        // Start from a random worker
+        let group_size = worker.handle.shared.group_size;
+        let group = worker.group;
+
+        let local_offset = self.rand.fastrand_n(group_size as u32) as usize;
+        let global_offset = group * group_size;
+
+        (0..group_size).map(move |i| {
+            let result = (i + local_offset) % group_size + global_offset;
+
+            debug_assert!(result >= group_size * group);
+            debug_assert!(result < group_size * (group + 1));
+
+            result
+        })
     }
 
     /// Function responsible for stealing tasks from another worker
@@ -907,13 +925,7 @@ impl Core {
             return None;
         }
 
-        let num = worker.handle.shared.remotes.len();
-        // Start from a random worker
-        let start = self.rand.fastrand_n(num as u32) as usize;
-
-        for i in 0..num {
-            let i = (start + i) % num;
-
+        for i in self.random_siblings(worker) {
             // Don't steal from ourself! We know we don't have work.
             if i == worker.index {
                 continue;
