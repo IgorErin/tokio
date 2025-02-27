@@ -12,7 +12,7 @@ fn new_stats() -> Stats {
 fn basic() {
     loom::model(|| {
         let (steal, mut local) = queue::local();
-        let inject = RefCell::new(vec![]);
+        let inject = RefCell::new(vec![vec![]]);
         let mut stats = new_stats();
 
         let th = thread::spawn(move || {
@@ -38,7 +38,7 @@ fn basic() {
         for _ in 0..2 {
             for _ in 0..2 {
                 let (task, _) = unowned(async {});
-                local.push_back_or_overflow(task, &inject, &mut stats);
+                local.push_back_or_overflow(task, 0, &inject, &mut stats);
             }
 
             if local.pop().is_some() {
@@ -47,14 +47,14 @@ fn basic() {
 
             // Push another task
             let (task, _) = unowned(async {});
-            local.push_back_or_overflow(task, &inject, &mut stats);
+            local.push_back_or_overflow(task, 0, &inject, &mut stats);
 
             while local.pop().is_some() {
                 n += 1;
             }
         }
 
-        n += inject.borrow_mut().drain(..).count();
+        inject.borrow().iter().for_each(|v| n += v.len());
 
         n += th.join().unwrap();
 
@@ -66,7 +66,7 @@ fn basic() {
 fn steal_overflow() {
     loom::model(|| {
         let (steal, mut local) = queue::local();
-        let inject = RefCell::new(vec![]);
+        let inject = RefCell::new(vec![vec![]]);
         let mut stats = new_stats();
 
         let th = thread::spawn(move || {
@@ -89,7 +89,7 @@ fn steal_overflow() {
 
         // push a task, pop a task
         let (task, _) = unowned(async {});
-        local.push_back_or_overflow(task, &inject, &mut stats);
+        local.push_back_or_overflow(task, 0, &inject, &mut stats);
 
         if local.pop().is_some() {
             n += 1;
@@ -97,7 +97,7 @@ fn steal_overflow() {
 
         for _ in 0..6 {
             let (task, _) = unowned(async {});
-            local.push_back_or_overflow(task, &inject, &mut stats);
+            local.push_back_or_overflow(task, 0, &inject, &mut stats);
         }
 
         n += th.join().unwrap();
@@ -106,7 +106,7 @@ fn steal_overflow() {
             n += 1;
         }
 
-        n += inject.borrow_mut().drain(..).count();
+        inject.borrow().iter().for_each(|v| n += v.len());
 
         assert_eq!(7, n);
     });
@@ -135,13 +135,13 @@ fn multi_stealer() {
 
     loom::model(|| {
         let (steal, mut local) = queue::local();
-        let inject = RefCell::new(vec![]);
+        let inject = RefCell::new(vec![vec![]]);
         let mut stats = new_stats();
 
         // Push work
         for _ in 0..NUM_TASKS {
             let (task, _) = unowned(async {});
-            local.push_back_or_overflow(task, &inject, &mut stats);
+            local.push_back_or_overflow(task, 0, &inject, &mut stats);
         }
 
         let th1 = {
@@ -157,7 +157,7 @@ fn multi_stealer() {
             n += 1;
         }
 
-        n += inject.borrow_mut().drain(..).count();
+        inject.borrow().iter().for_each(|v| n += v.len());
 
         n += th1.join().unwrap();
         n += th2.join().unwrap();
@@ -172,15 +172,15 @@ fn chained_steal() {
         let mut stats = new_stats();
         let (s1, mut l1) = queue::local();
         let (s2, mut l2) = queue::local();
-        let inject = RefCell::new(vec![]);
+        let inject = RefCell::new(vec![vec![]]);
 
         // Load up some tasks
         for _ in 0..4 {
             let (task, _) = unowned(async {});
-            l1.push_back_or_overflow(task, &inject, &mut stats);
+            l1.push_back_or_overflow(task, 0, &inject, &mut stats);
 
             let (task, _) = unowned(async {});
-            l2.push_back_or_overflow(task, &inject, &mut stats);
+            l2.push_back_or_overflow(task, 0, &inject, &mut stats);
         }
 
         // Spawn a task to steal from **our** queue
