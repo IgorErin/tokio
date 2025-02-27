@@ -97,6 +97,12 @@ pub(super) struct Worker {
     /// TODO(i.erin) ask about locallity
     group: usize,
 
+    /// TODO(i.erin) comments
+    group_size: usize,
+
+    //TODO(i.erin) move to handle.shared
+    ngroup: usize,
+
     /// Used to hand-off a worker's core to another thread.
     core: AtomicCell<Core>,
 }
@@ -318,6 +324,8 @@ pub(super) fn create(
             handle: handle.clone(),
             index: nworker,
             group: nworker / size,
+            group_size: size,
+            ngroup,
             core: AtomicCell::new(Some(core)),
         }));
     }
@@ -550,19 +558,26 @@ impl Context {
             // Run maintenance, if needed
             core = self.maintenance(core);
 
-            // First, check work available to the current worker.
+            // First, check work available to the current worker in group bounds.
             if let Some(task) = core.next_task(&self.worker) {
                 core = self.run_task(task, core)?;
                 continue;
             }
 
-            // We consumed all work in the queues and will start searching for work.
+            // We consumed all work in the group queues and will start searching for work.
             core.stats.end_processing_scheduled_tasks();
-
             // There is no more **local** work to process, try to steal work
-            // from other workers.
+            // from other workers within group TODO(i.erin).
             if let Some(task) = core.steal_work(&self.worker) {
                 // Found work, switch back to processing
+                core.stats.start_processing_scheduled_tasks();
+                core = self.run_task(task, core)?;
+                continue;
+            }
+
+            // Fallback for search over group bounderies.
+            // Process like local stealing --- we should use local stealing practices TODO(i.erin)
+            if let Some(task) = core.steal_remote_work(&self.worker) {
                 core.stats.start_processing_scheduled_tasks();
                 core = self.run_task(task, core)?;
             } else {
@@ -811,6 +826,50 @@ impl Core {
         self.tick = self.tick.wrapping_add(1);
     }
 
+    fn take_n_from_inject(
+        &mut self,
+        split_size: usize,
+        inject: &inject::Inject<Arc<Handle>>,
+    ) -> Option<Notified> {
+        if inject.is_empty() {
+            return None;
+        }
+
+        // Other threads can only **remove** tasks from the current worker's
+        // `run_queue`. So, we can be confident that by the time we call
+        // `run_queue.push_back` below, there will be *at least* `cap`
+        // available slots in the queue.
+        let cap = usize::min(
+            self.run_queue.remaining_slots(),
+            self.run_queue.max_capacity() / 2,
+        );
+
+        // The worker is currently idle, pull a batch of work from the
+        // injection queue. We don't want to pull *all* the work so other
+        // workers can also get some.
+        let n = usize::min(inject.len() / split_size + 1, cap);
+
+        // Take at least one task since the first task is returned directly
+        // and not pushed onto the local queue.
+        let n = usize::max(1, n);
+
+        inject.fetch_pop_n(n, &mut self.run_queue)
+    }
+
+    fn steal_remote_work(&mut self, worker: &Worker) -> Option<Notified> {
+        for group in worker.handle.random_groups() {
+            let inject = &worker.handle.shared.injects[group];
+            // TODO(i.erin) we may want to find bigger queue
+            // or ask user for hot queue
+            if !inject.is_empty() {
+                // TODO
+                return self.take_n_from_inject(worker.ngroup, &inject);
+            }
+        }
+
+        None
+    }
+
     /// Return the next notified task available to this worker.
     fn next_task(&mut self, worker: &Worker) -> Option<Notified> {
         if self.tick % self.global_queue_interval == 0 {
@@ -828,43 +887,7 @@ impl Core {
                 return maybe_task;
             }
 
-            // TODO(i.erin) now checked only group inject
-            if worker.inject().is_empty() {
-                return None;
-            }
-
-            // Other threads can only **remove** tasks from the current worker's
-            // `run_queue`. So, we can be confident that by the time we call
-            // `run_queue.push_back` below, there will be *at least* `cap`
-            // available slots in the queue.
-            let cap = usize::min(
-                self.run_queue.remaining_slots(),
-                self.run_queue.max_capacity() / 2,
-            );
-
-            // The worker is currently idle, pull a batch of work from the
-            // injection queue. We don't want to pull *all* the work so other
-            // workers can also get some.
-            let n = usize::min(
-                worker.inject().len() / worker.handle.shared.remotes.len() + 1,
-                cap,
-            );
-
-            // Take at least one task since the first task is returned directly
-            // and not pushed onto the local queue.
-            let n = usize::max(1, n);
-
-            let mut synced = worker.inject().synced().lock();
-            // safety: passing in the correct `inject::Synced`.
-            let mut tasks = unsafe { worker.inject().shared().pop_n(&mut synced, n) };
-
-            // Pop the first task to return immediately
-            let ret = tasks.next();
-
-            // Push the rest of the on the run queue
-            self.run_queue.push_back(tasks);
-
-            ret
+            self.take_n_from_inject(worker.group_size, worker.group_inject())
         }
     }
 
@@ -1006,7 +1029,7 @@ impl Core {
 
         if !self.is_shutdown {
             // Check if the scheduler has been shutdown
-            self.is_shutdown = worker.inject().is_closed();
+            self.is_shutdown = worker.group_inject().is_closed();
         }
 
         if !self.is_traced {
@@ -1058,7 +1081,7 @@ impl Core {
 
 impl Worker {
     /// Returns a reference to the scheduler's injection queue.
-    fn inject(&self) -> &inject::Inject<Arc<Handle>> {
+    fn group_inject(&self) -> &inject::Inject<Arc<Handle>> {
         &self.handle.shared.injects[self.group]
     }
 }

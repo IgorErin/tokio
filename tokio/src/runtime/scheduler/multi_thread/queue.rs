@@ -2,7 +2,7 @@
 
 use crate::loom::cell::UnsafeCell;
 use crate::loom::sync::Arc;
-use crate::runtime::scheduler::multi_thread::{overflow::OverflowShard, Stats};
+use crate::runtime::scheduler::multi_thread::{overflow::OverflowShard, overflow::PushFit, Stats};
 use crate::runtime::task;
 
 use std::mem::{self, MaybeUninit};
@@ -584,6 +584,12 @@ impl<T> Inner<T> {
 
     fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+impl<T> PushFit<task::Notified<T>> for Local<T> {
+    fn push_fit<I: ExactSizeIterator<Item = task::Notified<T>>>(&mut self, i: I) {
+        self.push_back(i)
     }
 }
 

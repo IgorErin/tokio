@@ -1,6 +1,7 @@
 //! Inject queue used to send wakeups to a work-stealing scheduler
 
 use crate::loom::sync::Mutex;
+use crate::runtime::scheduler::multi_thread::overflow::PushFit;
 use crate::runtime::task;
 
 mod pop;
@@ -69,22 +70,30 @@ impl<T: 'static> Inject<T> {
     }
 
     cfg_rt_multi_thread! {
-        pub (crate) fn is_empty(&self) -> bool {
-            self.shared.is_empty()
-        }
-
-        pub (crate) fn synced(&self) -> &Mutex<Synced> {
-            &self.synced
-        }
-
-        pub (crate) fn shared(&self) -> &Shared<T> {
-            &self.shared
-        }
+            pub (crate) fn is_empty(&self) -> bool {
+                self.shared.is_empty()
+            }
 
         pub (crate) fn push_batch<I>(&self, iter: I)
             where I: Iterator<Item = task::Notified<T>> {
             let mut sync = self.synced.lock();
             unsafe { self.shared.push_batch(sync.as_mut(), iter); }
+        }
+
+        pub (crate) fn fetch_pop_n<P>(&self, n: usize, push_batch: &mut P) -> Option<task::Notified<T>>
+        where P: PushFit<task::Notified<T>>
+        {
+            let mut synced = self.synced.lock();
+            // safety: passing in the correct `inject::Synced`.
+            let mut tasks = unsafe { self.shared.pop_n(&mut synced, n) };
+
+            // Pop the first task to return immediately
+            let ret = tasks.next();
+
+            // Push the rest of the on the run queue for example
+            push_batch.push_fit(tasks);
+
+            ret
         }
     }
 }

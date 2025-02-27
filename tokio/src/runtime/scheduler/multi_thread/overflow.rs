@@ -24,3 +24,7 @@ impl<T: 'static> OverflowShard<T> for RefCell<Vec<Vec<task::Notified<T>>>> {
         self.borrow_mut()[group].extend(iter);
     }
 }
+
+pub(crate) trait PushFit<T: 'static> {
+    fn push_fit<I: ExactSizeIterator<Item = T>>(&mut self, i: I);
+}

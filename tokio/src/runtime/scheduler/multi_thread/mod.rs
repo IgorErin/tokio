@@ -6,7 +6,7 @@ use counters::Counters;
 mod handle;
 pub(crate) use handle::Handle;
 
-mod overflow;
+pub(crate) mod overflow;
 
 mod idle;
 use self::idle::Idle;
