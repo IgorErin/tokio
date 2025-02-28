@@ -64,7 +64,7 @@ pub struct Builder {
     /// Only used when not using the current-thread executor.
     worker_threads: Option<usize>,
 
-    /// TODO(i.erin)
+    /// TODO(i.Erin)
     worker_group: usize,
 
     /// Cap on thread usage.
@@ -433,7 +433,7 @@ impl Builder {
         self
     }
 
-    /// TODO(i.erin)
+    /// TODO(i.Erin)
     pub fn worker_group(&mut self, val: usize) -> &mut Self {
         assert!(val > 0, "Worker groups cannot be set to 0");
         self.worker_group = val;

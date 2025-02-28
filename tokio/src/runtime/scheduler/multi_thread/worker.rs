@@ -94,10 +94,10 @@ pub(super) struct Worker {
     /// Index holding this worker's remote state
     index: usize,
 
-    /// TODO(i.erin) ask about locallity
+    /// TODO(i.Erin) ask about locality
     group: usize,
 
-    // TODO(i.erin) index within group (field or compute this?)
+    // TODO(i.Erin) index within group (field or compute this?)
     local_index: usize,
 
     /// Used to hand-off a worker's core to another thread.
@@ -163,10 +163,10 @@ pub(crate) struct Shared {
     ///  2. Submit work to the scheduler when a worker run queue is saturated
     pub(super) injects: Box<[inject::Inject<Arc<Handle>>]>,
 
-    /// TODO(i.erin) only for reading
+    /// TODO(i.Erin) only for reading
     group_size: usize,
 
-    //TODO(i.erin) only for reading
+    //TODO(i.Erin) only for reading
     ngroup: usize,
 
     /// Coordinates idle workers groups
@@ -563,7 +563,7 @@ impl Context {
             // We consumed all work in the group queues and will start searching for work.
             core.stats.end_processing_scheduled_tasks();
             // There is no more **local** work to process, try to steal work
-            // from other workers within group TODO(i.erin).
+            // from other workers within group TODO(i.Erin).
             if let Some(task) = core.steal_work(&self.worker) {
                 // Found work, switch back to processing
                 core.stats.start_processing_scheduled_tasks();
@@ -572,7 +572,7 @@ impl Context {
             }
 
             // Fallback for search over group bounderies.
-            // Process like local stealing --- we should use local stealing practices TODO(i.erin)
+            // Process like local stealing --- we should use local stealing practices TODO(i.Erin)
             if let Some(task) = core.steal_remote_work(&self.worker) {
                 core.stats.start_processing_scheduled_tasks();
                 core = self.run_task(task, core)?;
@@ -855,10 +855,10 @@ impl Core {
     fn steal_remote_work(&mut self, worker: &Worker) -> Option<Notified> {
         for group in worker.handle.random_groups() {
             let inject = &worker.handle.shared.injects[group];
-            // TODO(i.erin) we may want to find bigger queue
+            // TODO(i.Erin) we may want to find bigger queue
             // or ask user for hot queue
             if !inject.is_empty() {
-                // TODO(i.erin) split somehow better
+                // TODO(i.Erin) split somehow better
                 return self.take_n_from_inject(worker.handle.shared.ngroup, inject);
             }
         }
@@ -934,7 +934,7 @@ impl Core {
             }
         }
 
-        // TODO(i.erin) which queu to check? why here?
+        // TODO(i.Erin) which queu to check? why here?
         // Fallback on checking the global queue
         worker.handle.next_remote_task(Some(worker.group))
     }
@@ -1157,7 +1157,7 @@ impl Handle {
 
             if let Some(prev) = prev {
                 core.run_queue
-                    // TODO(i.erin) explicit group structure to specify overflow
+                    // TODO(i.Erin) explicit group structure to specify overflow
                     .push_back_or_overflow(prev, group, self, &mut core.stats);
             }
 
@@ -1204,7 +1204,7 @@ impl Handle {
     }
 
     fn push_remote_task(&self, group: Option<usize>, task: Notified) {
-        // TODO(i.erin) inc certain remote schedule
+        // TODO(i.Erin) inc certain remote schedule
         self.shared.scheduler_metrics.inc_remote_schedule_count();
 
         let group = group.unwrap_or_else(|| self.random_groups().next().unwrap());
@@ -1289,7 +1289,7 @@ impl Handle {
         // Drain the injection queue
         //
         // We already shut down every task, so we can simply drop the tasks.
-        // TODO(i.erin) smarter choose tasks
+        // TODO(i.Erin) smarter choose tasks
         while let Some(task) = self.next_remote_task(None) {
             drop(task);
         }

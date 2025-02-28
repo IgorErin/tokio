@@ -36,7 +36,7 @@ fn fits_256_one_at_a_time() {
     let mut stats = new_stats();
 
     for _ in 0..256 {
-        // TODO(i.erin)
+        // TODO(i.Erin)
         let (task, _) = super::unowned(async {});
         local.push_back_or_overflow(task, 0, &inject, &mut stats);
     }
@@ -127,7 +127,7 @@ fn steal_batch() {
 
     for _ in 0..4 {
         let (task, _) = super::unowned(async {});
-        // TODO(i.erin)
+        // TODO(i.Erin)
         local1.push_back_or_overflow(task, 0, &inject, &mut stats);
     }
 
@@ -202,7 +202,7 @@ fn stress1() {
         for nlocal in 0..NUM_LOCAL {
             for npush in 0..NUM_PUSH {
                 let (task, _) = super::unowned(async {});
-                // TODO(i.erin)
+                // TODO(i.Erin)
                 let group = (nlocal * npush) % n_shards;
                 local.push_back_or_overflow(task, group, &inject, &mut stats);
             }

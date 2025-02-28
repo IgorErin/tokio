@@ -87,7 +87,7 @@ impl RuntimeMetrics {
     /// #[tokio::main]
     /// async fn main() {
     ///     let metrics = Handle::current().metrics();
-    ///     // TODO(i.erin)
+    ///     // TODO(i.Erin)
     ///     let n = metrics.global_queue_depth(0);
     ///     println!("{} tasks currently pending in the runtime's global queue", n);
     /// }
