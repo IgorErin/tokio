@@ -247,10 +247,27 @@ impl Runtime {
         let fut_size = mem::size_of::<F>();
         if fut_size > BOX_FUTURE_THRESHOLD {
             self.handle
-                .spawn_named(Box::pin(future), SpawnMeta::new_unnamed(fut_size))
+                .spawn_named(Box::pin(future), None, SpawnMeta::new_unnamed(fut_size))
         } else {
             self.handle
-                .spawn_named(future, SpawnMeta::new_unnamed(fut_size))
+                .spawn_named(future, None, SpawnMeta::new_unnamed(fut_size))
+        }
+    }
+
+    /// TODO(i.Erin)
+    #[track_caller]
+    pub fn spawn_into<F>(&self, group: Option<usize>, future: F) -> JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        let fut_size = mem::size_of::<F>();
+        if fut_size > BOX_FUTURE_THRESHOLD {
+            self.handle
+                .spawn_named(Box::pin(future), group, SpawnMeta::new_unnamed(fut_size))
+        } else {
+            self.handle
+                .spawn_named(future, group, SpawnMeta::new_unnamed(fut_size))
         }
     }
 

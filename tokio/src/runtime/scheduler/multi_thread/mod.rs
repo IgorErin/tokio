@@ -6,8 +6,7 @@ use counters::Counters;
 mod handle;
 pub(crate) use handle::Handle;
 
-mod overflow;
-pub(crate) use overflow::Overflow;
+pub(crate) mod overflow;
 
 mod idle;
 use self::idle::Idle;
@@ -21,7 +20,7 @@ pub(crate) use park::{Parker, Unparker};
 pub(crate) mod queue;
 
 mod worker;
-pub(crate) use worker::{Context, Launch, Shared};
+pub(crate) use worker::{Context, Launch};
 
 cfg_taskdump! {
     mod trace;
@@ -56,6 +55,7 @@ pub(crate) struct MultiThread;
 impl MultiThread {
     pub(crate) fn new(
         size: usize,
+        group: usize,
         driver: Driver,
         driver_handle: driver::Handle,
         blocking_spawner: blocking::Spawner,
@@ -65,6 +65,7 @@ impl MultiThread {
         let parker = Parker::new(driver);
         let (handle, launch) = worker::create(
             size,
+            group,
             parker,
             driver_handle,
             blocking_spawner,

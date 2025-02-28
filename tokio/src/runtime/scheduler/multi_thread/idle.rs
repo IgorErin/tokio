@@ -1,8 +1,8 @@
 //! Coordinates idling workers
 
 use crate::loom::sync::atomic::AtomicUsize;
-use crate::runtime::scheduler::multi_thread::Shared;
 
+use crate::loom::sync::Mutex;
 use std::fmt;
 use std::sync::atomic::Ordering::{self, SeqCst};
 
@@ -15,10 +15,12 @@ pub(super) struct Idle {
 
     /// Total number of workers.
     num_workers: usize,
+
+    synced: Mutex<Synced>,
 }
 
-/// Data synchronized by the scheduler mutex
-pub(super) struct Synced {
+/// Data synchronized by the mutex
+struct Synced {
     /// Sleeping workers
     sleepers: Vec<usize>,
 }
@@ -31,24 +33,23 @@ const SEARCH_MASK: usize = (1 << UNPARK_SHIFT) - 1;
 struct State(usize);
 
 impl Idle {
-    pub(super) fn new(num_workers: usize) -> (Idle, Synced) {
+    pub(super) fn new(num_workers: usize) -> Idle {
         let init = State::new(num_workers);
-
-        let idle = Idle {
-            state: AtomicUsize::new(init.into()),
-            num_workers,
-        };
 
         let synced = Synced {
             sleepers: Vec::with_capacity(num_workers),
         };
 
-        (idle, synced)
+        Idle {
+            state: AtomicUsize::new(init.into()),
+            num_workers,
+            synced: Mutex::new(synced),
+        }
     }
 
     /// If there are no workers actively searching, returns the index of a
     /// worker currently sleeping.
-    pub(super) fn worker_to_notify(&self, shared: &Shared) -> Option<usize> {
+    pub(super) fn worker_to_notify(&self) -> Option<usize> {
         // If at least one worker is spinning, work being notified will
         // eventually be found. A searching thread will find **some** work and
         // notify another worker, eventually leading to our work being found.
@@ -63,7 +64,7 @@ impl Idle {
         }
 
         // Acquire the lock
-        let mut lock = shared.synced.lock();
+        let mut lock = self.synced.lock();
 
         // Check again, now that the lock is acquired
         if !self.notify_should_wakeup() {
@@ -75,7 +76,7 @@ impl Idle {
         State::unpark_one(&self.state, 1);
 
         // Get the worker to unpark
-        let ret = lock.idle.sleepers.pop();
+        let ret = lock.sleepers.pop();
         debug_assert!(ret.is_some());
 
         ret
@@ -83,20 +84,15 @@ impl Idle {
 
     /// Returns `true` if the worker needs to do a final check for submitted
     /// work.
-    pub(super) fn transition_worker_to_parked(
-        &self,
-        shared: &Shared,
-        worker: usize,
-        is_searching: bool,
-    ) -> bool {
+    pub(super) fn transition_worker_to_parked(&self, worker: usize, is_searching: bool) -> bool {
         // Acquire the lock
-        let mut lock = shared.synced.lock();
+        let mut lock = self.synced.lock();
 
         // Decrement the number of unparked threads
         let ret = State::dec_num_unparked(&self.state, is_searching);
 
         // Track the sleeping worker
-        lock.idle.sleepers.push(worker);
+        lock.sleepers.push(worker);
 
         ret
     }
@@ -126,9 +122,9 @@ impl Idle {
     /// within the worker's park routine.
     ///
     /// Returns `true` if the worker was parked before calling the method.
-    pub(super) fn unpark_worker_by_id(&self, shared: &Shared, worker_id: usize) -> bool {
-        let mut lock = shared.synced.lock();
-        let sleepers = &mut lock.idle.sleepers;
+    pub(super) fn unpark_worker_by_id(&self, worker_id: usize) -> bool {
+        let mut lock = self.synced.lock();
+        let sleepers = &mut lock.sleepers;
 
         for index in 0..sleepers.len() {
             if sleepers[index] == worker_id {
@@ -145,9 +141,9 @@ impl Idle {
     }
 
     /// Returns `true` if `worker_id` is contained in the sleep set.
-    pub(super) fn is_parked(&self, shared: &Shared, worker_id: usize) -> bool {
-        let lock = shared.synced.lock();
-        lock.idle.sleepers.contains(&worker_id)
+    pub(super) fn is_parked(&self, worker_id: usize) -> bool {
+        let lock = self.synced.lock();
+        lock.sleepers.contains(&worker_id)
     }
 
     fn notify_should_wakeup(&self) -> bool {

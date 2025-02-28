@@ -138,16 +138,19 @@ cfg_rt! {
             }
         }
 
-        pub(crate) fn spawn<F>(&self, future: F, id: Id) -> JoinHandle<F::Output>
+        pub(crate) fn spawn<F>(&self, future: F, group: Option<usize>, id: Id) -> JoinHandle<F::Output>
         where
             F: Future + Send + 'static,
             F::Output: Send + 'static,
         {
             match self {
-                Handle::CurrentThread(h) => current_thread::Handle::spawn(h, future, id),
+                Handle::CurrentThread(h) => {
+                    assert!(group.is_none());
+                    current_thread::Handle::spawn(h, future, id)
+                },
 
                 #[cfg(feature = "rt-multi-thread")]
-                Handle::MultiThread(h) => multi_thread::Handle::spawn(h, future, id),
+                Handle::MultiThread(h) => multi_thread::Handle::spawn(h, future, group, id),
 
                 #[cfg(all(tokio_unstable, feature = "rt-multi-thread"))]
                 Handle::MultiThreadAlt(h) => multi_thread_alt::Handle::spawn(h, future, id),
@@ -233,8 +236,8 @@ cfg_rt! {
             match_flavor!(self, Handle(handle) => handle.num_alive_tasks())
         }
 
-        pub(crate) fn injection_queue_depth(&self) -> usize {
-            match_flavor!(self, Handle(handle) => handle.injection_queue_depth())
+        pub(crate) fn injection_queue_depth(&self, group: usize) -> usize {
+            match_flavor!(self, Handle(handle) => handle.injection_queue_depth(group))
         }
     }
 
