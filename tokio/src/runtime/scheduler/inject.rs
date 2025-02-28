@@ -1,6 +1,7 @@
 //! Inject queue used to send wakeups to a work-stealing scheduler
 
 use crate::loom::sync::Mutex;
+#[cfg(feature = "rt-multi-thread")]
 use crate::runtime::scheduler::multi_thread::overflow::PushFit;
 use crate::runtime::task;
 
