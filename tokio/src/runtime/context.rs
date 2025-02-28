@@ -124,6 +124,7 @@ tokio_thread_local! {
 #[cfg(any(
     feature = "time",
     feature = "macros",
+    feature = "rt-multi-thread",
     all(feature = "sync", feature = "rt")
 ))]
 pub(crate) fn thread_rng_n(n: u32) -> u32 {
