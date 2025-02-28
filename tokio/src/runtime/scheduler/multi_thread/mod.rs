@@ -20,7 +20,7 @@ pub(crate) use park::{Parker, Unparker};
 pub(crate) mod queue;
 
 mod worker;
-pub(crate) use worker::{Context, Launch, Shared};
+pub(crate) use worker::{Context, Launch};
 
 cfg_taskdump! {
     mod trace;
