@@ -91,9 +91,9 @@ impl<'a> Builder<'a> {
     {
         let fut_size = mem::size_of::<Fut>();
         Ok(if fut_size > BOX_FUTURE_THRESHOLD {
-            super::spawn::spawn_inner(Box::pin(future), SpawnMeta::new(self.name, fut_size))
+            super::spawn::spawn_inner(Box::pin(future), None, SpawnMeta::new(self.name, fut_size))
         } else {
-            super::spawn::spawn_inner(future, SpawnMeta::new(self.name, fut_size))
+            super::spawn::spawn_inner(future, None, SpawnMeta::new(self.name, fut_size))
         })
     }
 
@@ -112,9 +112,9 @@ impl<'a> Builder<'a> {
     {
         let fut_size = mem::size_of::<Fut>();
         Ok(if fut_size > BOX_FUTURE_THRESHOLD {
-            handle.spawn_named(Box::pin(future), SpawnMeta::new(self.name, fut_size))
+            handle.spawn_named(Box::pin(future), None, SpawnMeta::new(self.name, fut_size))
         } else {
-            handle.spawn_named(future, SpawnMeta::new(self.name, fut_size))
+            handle.spawn_named(future, None, SpawnMeta::new(self.name, fut_size))
         })
     }
 

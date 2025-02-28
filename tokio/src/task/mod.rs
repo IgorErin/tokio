@@ -274,6 +274,8 @@ cfg_rt! {
 
     mod spawn;
     pub use spawn::spawn;
+    #[cfg(feature = "rt-multi-thread")]
+    pub use spawn::spawn_into;
 
     cfg_rt_multi_thread! {
         pub use blocking::block_in_place;

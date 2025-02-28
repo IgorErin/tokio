@@ -1100,7 +1100,7 @@ impl task::Schedule for Arc<Handle> {
     }
 
     fn schedule(&self, task: Notified) {
-        self.schedule_task(task, false);
+        self.schedule_task(task, None, false);
     }
 
     fn hooks(&self) -> TaskHarnessScheduleHooks {
@@ -1110,32 +1110,37 @@ impl task::Schedule for Arc<Handle> {
     }
 
     fn yield_now(&self, task: Notified) {
-        self.schedule_task(task, true);
+        self.schedule_task(task, None, true);
     }
 }
 
 impl Handle {
-    pub(super) fn schedule_task(&self, task: Notified, is_yield: bool) {
+    pub(super) fn schedule_task(&self, task: Notified, group: Option<usize>, is_yield: bool) {
         with_current(|maybe_cx| {
             if let Some(cx) = maybe_cx {
                 // Make sure the task is part of the **current** scheduler.
                 if self.ptr_eq(&cx.worker.handle) {
                     // And the current thread still holds a core
                     if let Some(core) = cx.core.borrow_mut().as_mut() {
-                        self.schedule_local(core, task, cx.worker.group, is_yield);
+                        let group = group.unwrap_or(cx.worker.group);
+                        self.schedule_local(core, task, group, is_yield);
                         return;
                     }
                 }
             }
 
             // Otherwise, use the inject queue.
-            self.push_remote_task(None, task);
+            self.push_remote_task(group, task);
         });
     }
 
-    pub(super) fn schedule_option_task_without_yield(&self, task: Option<Notified>) {
+    pub(super) fn schedule_option_task_without_yield(
+        &self,
+        task: Option<Notified>,
+        group: Option<usize>,
+    ) {
         if let Some(task) = task {
-            self.schedule_task(task, false);
+            self.schedule_task(task, group, false);
         }
     }
 
