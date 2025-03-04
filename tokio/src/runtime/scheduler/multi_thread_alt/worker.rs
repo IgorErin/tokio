@@ -59,10 +59,11 @@
 use crate::loom::sync::{Arc, Condvar, Mutex, MutexGuard};
 use crate::runtime;
 use crate::runtime::driver::Driver;
+use crate::runtime::scheduler::multi_thread::GroupIndex;
 use crate::runtime::scheduler::multi_thread_alt::{
     idle, queue, stats, Counters, Handle, Idle, Overflow, Stats, TraceStatus,
 };
-use crate::runtime::scheduler::{self, inject, Lock};
+use crate::runtime::scheduler::{self, inject, LockShard};
 use crate::runtime::task::{OwnedTasks, TaskHarnessScheduleHooks};
 use crate::runtime::{blocking, driver, task, Config, SchedulerMetrics, WorkerMetrics};
 use crate::runtime::{context, TaskHooks};
@@ -1442,7 +1443,7 @@ impl Shared {
         I: Iterator<Item = task::Notified<Arc<Handle>>>,
     {
         unsafe {
-            self.inject.push_batch(self, iter);
+            self.inject.push_batch(GroupIndex::new(0), self, iter);
         }
     }
 
@@ -1451,7 +1452,8 @@ impl Shared {
         I: Iterator<Item = task::Notified<Arc<Handle>>>,
     {
         unsafe {
-            self.inject.push_batch(&mut synced.inject, iter);
+            self.inject
+                .push_batch(GroupIndex::new(0), &mut synced.inject, iter);
         }
     }
 
@@ -1529,20 +1531,20 @@ impl Overflow<Arc<Handle>> for Shared {
     }
 }
 
-impl<'a> Lock<inject::Synced> for &'a Shared {
+impl<'a> LockShard<inject::Synced> for &'a Shared {
     type Handle = SyncedGuard<'a>;
 
-    fn lock(self) -> Self::Handle {
+    fn lock(self, _: GroupIndex) -> Self::Handle {
         SyncedGuard {
             lock: self.synced.lock(),
         }
     }
 }
 
-impl<'a> Lock<Synced> for &'a Shared {
+impl<'a> LockShard<Synced> for &'a Shared {
     type Handle = SyncedGuard<'a>;
 
-    fn lock(self) -> Self::Handle {
+    fn lock(self, _: GroupIndex) -> Self::Handle {
         SyncedGuard {
             lock: self.synced.lock(),
         }

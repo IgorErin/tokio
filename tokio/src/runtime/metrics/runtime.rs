@@ -684,8 +684,8 @@ impl RuntimeMetrics {
         /// Renamed to [`RuntimeMetrics::global_queue_depth`]
         #[deprecated = "Renamed to global_queue_depth"]
         #[doc(hidden)]
-        pub fn injection_queue_depth(&self) -> usize {
-            self.handle.inner.injection_queue_depth()
+        pub fn injection_queue_depth(&self, group: usize) -> usize {
+            self.handle.inner.injection_queue_depth(group)
         }
 
         /// Returns the number of tasks currently scheduled in the given worker's

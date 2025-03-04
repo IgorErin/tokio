@@ -36,7 +36,7 @@ impl Handle {
         &self.shared.worker_metrics[worker]
     }
 
-    pub(crate) fn injection_queue_depth(&self) -> usize {
+    pub(crate) fn injection_queue_depth(&self, _group: usize) -> usize {
         self.shared.injection_queue_depth()
     }
 
