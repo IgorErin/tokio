@@ -1,5 +1,6 @@
 //! Coordinates idling workers
 
+use super::{GroupIndex, LocalIndex};
 use crate::loom::sync::atomic::AtomicUsize;
 use crate::runtime::scheduler::multi_thread::Shared;
 
@@ -20,7 +21,7 @@ pub(super) struct Idle {
 /// Data synchronized by the scheduler mutex
 pub(super) struct Synced {
     /// Sleeping workers
-    sleepers: Vec<usize>,
+    sleepers: Vec<LocalIndex>,
 }
 
 const UNPARK_SHIFT: usize = 16;
@@ -48,7 +49,11 @@ impl Idle {
 
     /// If there are no workers actively searching, returns the index of a
     /// worker currently sleeping.
-    pub(super) fn worker_to_notify(&self, shared: &Shared) -> Option<usize> {
+    pub(super) fn worker_to_notify(
+        &self,
+        shared: &Shared,
+        group: GroupIndex,
+    ) -> Option<LocalIndex> {
         // If at least one worker is spinning, work being notified will
         // eventually be found. A searching thread will find **some** work and
         // notify another worker, eventually leading to our work being found.
@@ -63,7 +68,7 @@ impl Idle {
         }
 
         // Acquire the lock
-        let mut lock = shared.synced.lock();
+        let mut lock = shared.synced(group).lock();
 
         // Check again, now that the lock is acquired
         if !self.notify_should_wakeup() {
@@ -86,11 +91,12 @@ impl Idle {
     pub(super) fn transition_worker_to_parked(
         &self,
         shared: &Shared,
-        worker: usize,
+        worker: LocalIndex,
+        group: GroupIndex,
         is_searching: bool,
     ) -> bool {
         // Acquire the lock
-        let mut lock = shared.synced.lock();
+        let mut lock = shared.synced(group).lock();
 
         // Decrement the number of unparked threads
         let ret = State::dec_num_unparked(&self.state, is_searching);
@@ -126,8 +132,13 @@ impl Idle {
     /// within the worker's park routine.
     ///
     /// Returns `true` if the worker was parked before calling the method.
-    pub(super) fn unpark_worker_by_id(&self, shared: &Shared, worker_id: usize) -> bool {
-        let mut lock = shared.synced.lock();
+    pub(super) fn unpark_worker_by_id(
+        &self,
+        shared: &Shared,
+        worker_id: LocalIndex,
+        group: GroupIndex,
+    ) -> bool {
+        let mut lock = shared.synced(group).lock();
         let sleepers = &mut lock.idle.sleepers;
 
         for index in 0..sleepers.len() {
@@ -145,8 +156,13 @@ impl Idle {
     }
 
     /// Returns `true` if `worker_id` is contained in the sleep set.
-    pub(super) fn is_parked(&self, shared: &Shared, worker_id: usize) -> bool {
-        let lock = shared.synced.lock();
+    pub(super) fn is_parked(
+        &self,
+        shared: &Shared,
+        worker_id: LocalIndex,
+        group: GroupIndex,
+    ) -> bool {
+        let lock = shared.synced(group).lock();
         lock.idle.sleepers.contains(&worker_id)
     }
 

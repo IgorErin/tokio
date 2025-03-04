@@ -59,9 +59,9 @@
 use crate::loom::sync::{Arc, Mutex};
 use crate::runtime;
 use crate::runtime::scheduler::multi_thread::{
-    idle, queue, Counters, Handle, Idle, Overflow, Parker, Stats, TraceStatus, Unparker,
+    idle, queue, Counters, Handle, Idle, OverflowShard, Parker, Stats, TraceStatus, Unparker,
 };
-use crate::runtime::scheduler::{inject, Defer, Lock};
+use crate::runtime::scheduler::{inject, Defer, LockShard};
 use crate::runtime::task::{OwnedTasks, TaskHarnessScheduleHooks};
 use crate::runtime::{blocking, driver, scheduler, task, Config, SchedulerMetrics, WorkerMetrics};
 use crate::runtime::{context, TaskHooks};
@@ -84,13 +84,50 @@ cfg_not_taskdump! {
     mod taskdump_mock;
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) struct GlobalIndex(usize);
+
+impl GlobalIndex {
+    pub(crate) fn to_u32(self) -> u32 {
+        self.0 as u32
+    }
+
+    pub(crate) fn new(local: LocalIndex, group: GroupIndex, group_size: GroupSize) -> GlobalIndex {
+        GlobalIndex(local.0 + group.0 * group_size.0)
+    }
+}
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) struct LocalIndex(usize);
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) struct GroupIndex(usize);
+
+impl GroupIndex {
+    pub(crate) fn new(group: usize) -> GroupIndex {
+        GroupIndex(group)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn to_usize(self) -> usize {
+        self.0
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) struct GroupSize(usize);
+
 /// A scheduler worker
 pub(super) struct Worker {
     /// Reference to scheduler's handle
     handle: Arc<Handle>,
 
     /// Index holding this worker's remote state
-    index: usize,
+    global_index: GlobalIndex,
+
+    /// Index for Idle and other local for group structers
+    local_index: LocalIndex,
+
+    /// TODO(i.Erin) comment
+    group_index: GroupIndex,
 
     /// Used to hand-off a worker's core to another thread.
     core: AtomicCell<Core>,
@@ -150,16 +187,18 @@ pub(crate) struct Shared {
     /// Global task queue used for:
     ///  1. Submit work to the scheduler while **not** currently on a worker thread.
     ///  2. Submit work to the scheduler when a worker run queue is saturated
-    pub(super) inject: inject::Shared<Arc<Handle>>,
+    pub(super) injects: Box<[inject::Shared<Arc<Handle>>]>,
 
     /// Coordinates idle workers
-    idle: Idle,
+    idles: Box<[Idle]>,
 
     /// Collection of all active tasks spawned onto this executor.
     pub(crate) owned: OwnedTasks<Arc<Handle>>,
 
     /// Data synchronized by the scheduler mutex
-    pub(super) synced: Mutex<Synced>,
+    pub(super) synceds: Box<[Mutex<Synced>]>,
+
+    group_size: GroupSize,
 
     /// Cores that have observed the shutdown signal
     ///
@@ -239,18 +278,19 @@ const MAX_LIFO_POLLS_PER_TICK: usize = 3;
 
 pub(super) fn create(
     size: usize,
+    worker_groups: usize,
     park: Parker,
     driver_handle: driver::Handle,
     blocking_spawner: blocking::Spawner,
     seed_generator: RngSeedGenerator,
     config: Config,
 ) -> (Arc<Handle>, Launch) {
-    let mut cores = Vec::with_capacity(size);
-    let mut remotes = Vec::with_capacity(size);
-    let mut worker_metrics = Vec::with_capacity(size);
+    let mut cores = Vec::with_capacity(size * worker_groups);
+    let mut remotes = Vec::with_capacity(size * worker_groups);
+    let mut worker_metrics = Vec::with_capacity(size * worker_groups);
 
     // Create the local queues
-    for _ in 0..size {
+    for _ in 0..size * worker_groups {
         let (steal, run_queue) = queue::local();
 
         let park = park.clone();
@@ -276,21 +316,32 @@ pub(super) fn create(
         worker_metrics.push(metrics);
     }
 
-    let (idle, idle_synced) = Idle::new(size);
-    let (inject, inject_synced) = inject::Shared::new();
+    let mut idles = Vec::with_capacity(worker_groups);
+    let mut injects = Vec::with_capacity(worker_groups);
+    let mut synceds = Vec::with_capacity(worker_groups);
+
+    for _ in 0..worker_groups {
+        let (idle, idle_synced) = Idle::new(size);
+        let (inject, inject_synced) = inject::Shared::new();
+
+        idles.push(idle);
+        injects.push(inject);
+        synceds.push(Mutex::new(Synced {
+            inject: inject_synced,
+            idle: idle_synced,
+        }));
+    }
 
     let remotes_len = remotes.len();
     let handle = Arc::new(Handle {
         task_hooks: TaskHooks::from_config(&config),
         shared: Shared {
             remotes: remotes.into_boxed_slice(),
-            inject,
-            idle,
+            injects: injects.into_boxed_slice(),
+            idles: idles.into_boxed_slice(),
+            group_size: GroupSize(size),
             owned: OwnedTasks::new(size),
-            synced: Mutex::new(Synced {
-                idle: idle_synced,
-                inject: inject_synced,
-            }),
+            synceds: synceds.into_boxed_slice(),
             shutdown_cores: Mutex::new(vec![]),
             trace_status: TraceStatus::new(remotes_len),
             config,
@@ -308,7 +359,9 @@ pub(super) fn create(
     for (index, core) in cores.drain(..).enumerate() {
         launch.0.push(Arc::new(Worker {
             handle: handle.clone(),
-            index,
+            global_index: GlobalIndex(index),
+            local_index: LocalIndex(index % size),
+            group_index: GroupIndex(index / size),
             core: AtomicCell::new(Some(core)),
         }));
     }
@@ -335,8 +388,7 @@ where
                         let core = cx.worker.core.take();
 
                         if core.is_some() {
-                            cx.worker.handle.shared.worker_metrics[cx.worker.index]
-                                .set_thread_id(thread::current().id());
+                            cx.worker.metrics().set_thread_id(thread::current().id());
                         }
 
                         let mut cx_core = cx.core.borrow_mut();
@@ -409,8 +461,12 @@ where
         // run this core. Except for the task in the lifo_slot, all tasks can be
         // stolen, so we move the task out of the lifo_slot to the run_queue.
         if let Some(task) = core.lifo_slot.take() {
-            core.run_queue
-                .push_back_or_overflow(task, &*cx.worker.handle, &mut core.stats);
+            core.run_queue.push_back_or_overflow(
+                task,
+                cx.worker.group_index,
+                &*cx.worker.handle,
+                &mut core.stats,
+            );
         }
 
         // We are taking the core from the context and sending it to another
@@ -487,7 +543,7 @@ fn run(worker: Arc<Worker>) {
         None => return,
     };
 
-    worker.handle.shared.worker_metrics[worker.index].set_thread_id(thread::current().id());
+    worker.metrics().set_thread_id(thread::current().id());
 
     let handle = scheduler::Handle::MultiThread(worker.handle.clone());
 
@@ -565,7 +621,9 @@ impl Context {
 
         core.pre_shutdown(&self.worker);
         // Signal shutdown
-        self.worker.handle.shutdown_core(core);
+        self.worker
+            .handle
+            .shutdown_core(core, self.worker.group_index);
         Err(())
     }
 
@@ -636,6 +694,7 @@ impl Context {
                     // the back of the queue and return.
                     core.run_queue.push_back_or_overflow(
                         task,
+                        self.worker.group_index,
                         &*self.worker.handle,
                         &mut core.stats,
                     );
@@ -728,8 +787,7 @@ impl Context {
         if core.transition_to_parked(&self.worker) {
             while !core.is_shutdown && !core.is_traced {
                 core.stats.about_to_park();
-                core.stats
-                    .submit(&self.worker.handle.shared.worker_metrics[self.worker.index]);
+                core.stats.submit(self.worker.metrics());
 
                 core = self.park_timeout(core, None);
 
@@ -775,7 +833,9 @@ impl Context {
         core.park = Some(park);
 
         if core.should_notify_others() {
-            self.worker.handle.notify_parked_local();
+            self.worker
+                .handle
+                .notify_parked_local(self.worker.group_index);
         }
 
         core
@@ -786,8 +846,18 @@ impl Context {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn get_worker_index(&self) -> usize {
-        self.worker.index
+    pub(crate) fn get_worker_index(&self) -> GlobalIndex {
+        self.worker.global_index
+    }
+}
+
+impl Shared {
+    pub(crate) fn synced(&self, group: GroupIndex) -> &Mutex<Synced> {
+        &self.synceds[group.0]
+    }
+
+    pub(crate) fn inject(&self, group: GroupIndex) -> &inject::Shared<Arc<Handle>> {
+        &self.injects[group.0]
     }
 }
 
@@ -805,7 +875,7 @@ impl Core {
 
             worker
                 .handle
-                .next_remote_task()
+                .next_remote_task(worker.group_index)
                 .or_else(|| self.next_local_task())
         } else {
             let maybe_task = self.next_local_task();
@@ -839,7 +909,7 @@ impl Core {
             // and not pushed onto the local queue.
             let n = usize::max(1, n);
 
-            let mut synced = worker.handle.shared.synced.lock();
+            let mut synced = worker.synced().lock();
             // safety: passing in the correct `inject::Synced`.
             let mut tasks = unsafe { worker.inject().pop_n(&mut synced.inject, n) };
 
@@ -857,6 +927,21 @@ impl Core {
         self.lifo_slot.take().or_else(|| self.run_queue.pop())
     }
 
+    fn siblings(&mut self, worker: &Worker) -> impl Iterator<Item = GlobalIndex> {
+        let group_size = worker.handle.shared.group_size.0;
+        let start = self.rand.fastrand_n(group_size as u32) as usize;
+
+        let offset = worker.group_index.0 * group_size;
+        let self_index = worker.global_index;
+
+        (start..start + group_size)
+            .map(move |i| {
+                let local_index = i % group_size;
+                GlobalIndex(offset + local_index)
+            })
+            .filter(move |ind| ind != &self_index)
+    }
+
     /// Function responsible for stealing tasks from another worker
     ///
     /// Note: Only if less than half the workers are searching for tasks to steal
@@ -867,19 +952,8 @@ impl Core {
             return None;
         }
 
-        let num = worker.handle.shared.remotes.len();
-        // Start from a random worker
-        let start = self.rand.fastrand_n(num as u32) as usize;
-
-        for i in 0..num {
-            let i = (start + i) % num;
-
-            // Don't steal from ourself! We know we don't have work.
-            if i == worker.index {
-                continue;
-            }
-
-            let target = &worker.handle.shared.remotes[i];
+        for i in self.siblings(worker) {
+            let target = worker.handle.remote(i);
             if let Some(task) = target
                 .steal
                 .steal_into(&mut self.run_queue, &mut self.stats)
@@ -889,12 +963,12 @@ impl Core {
         }
 
         // Fallback on checking the global queue
-        worker.handle.next_remote_task()
+        worker.handle.next_remote_task(worker.group_index)
     }
 
     fn transition_to_searching(&mut self, worker: &Worker) -> bool {
         if !self.is_searching {
-            self.is_searching = worker.handle.shared.idle.transition_worker_to_searching();
+            self.is_searching = worker.idle().transition_worker_to_searching();
         }
 
         self.is_searching
@@ -906,7 +980,9 @@ impl Core {
         }
 
         self.is_searching = false;
-        worker.handle.transition_worker_from_searching();
+        worker
+            .handle
+            .transition_worker_from_searching(worker.group_index);
     }
 
     fn has_tasks(&self) -> bool {
@@ -934,9 +1010,10 @@ impl Core {
         // When the final worker transitions **out** of searching to parked, it
         // must check all the queues one last time in case work materialized
         // between the last work scan and transitioning out of searching.
-        let is_last_searcher = worker.handle.shared.idle.transition_worker_to_parked(
+        let is_last_searcher = worker.idle().transition_worker_to_parked(
             &worker.handle.shared,
-            worker.index,
+            worker.local_index,
+            worker.group_index,
             self.is_searching,
         );
 
@@ -945,7 +1022,7 @@ impl Core {
         self.is_searching = false;
 
         if is_last_searcher {
-            worker.handle.notify_if_work_pending();
+            worker.handle.notify_if_work_pending(worker.group_index);
         }
 
         true
@@ -960,20 +1037,19 @@ impl Core {
             // state when the wake originates from another worker *or* a new task
             // is pushed. We do *not* want the worker to transition to "searching"
             // when it wakes when the I/O driver receives new events.
-            self.is_searching = !worker
-                .handle
-                .shared
-                .idle
-                .unpark_worker_by_id(&worker.handle.shared, worker.index);
+            self.is_searching = !worker.idle().unpark_worker_by_id(
+                &worker.handle.shared,
+                worker.local_index,
+                worker.group_index,
+            );
             return true;
         }
 
-        if worker
-            .handle
-            .shared
-            .idle
-            .is_parked(&worker.handle.shared, worker.index)
-        {
+        if worker.idle().is_parked(
+            &worker.handle.shared,
+            worker.local_index,
+            worker.group_index,
+        ) {
             return false;
         }
 
@@ -984,12 +1060,11 @@ impl Core {
 
     /// Runs maintenance work such as checking the pool's state.
     fn maintenance(&mut self, worker: &Worker) {
-        self.stats
-            .submit(&worker.handle.shared.worker_metrics[worker.index]);
+        self.stats.submit(worker.metrics());
 
         if !self.is_shutdown {
             // Check if the scheduler has been shutdown
-            let synced = worker.handle.shared.synced.lock();
+            let synced = worker.synced().lock();
             self.is_shutdown = worker.inject().is_closed(&synced.inject);
         }
 
@@ -1013,8 +1088,7 @@ impl Core {
             .owned
             .close_and_shutdown_all(start as usize);
 
-        self.stats
-            .submit(&worker.handle.shared.worker_metrics[worker.index]);
+        self.stats.submit(worker.metrics());
     }
 
     /// Shuts down the core.
@@ -1043,7 +1117,19 @@ impl Core {
 impl Worker {
     /// Returns a reference to the scheduler's injection queue.
     fn inject(&self) -> &inject::Shared<Arc<Handle>> {
-        &self.handle.shared.inject
+        &self.handle.shared.injects[self.group_index.0]
+    }
+
+    fn idle(&self) -> &Idle {
+        &self.handle.shared.idles[self.group_index.0]
+    }
+
+    fn metrics(&self) -> &WorkerMetrics {
+        &self.handle.shared.worker_metrics[self.global_index.0]
+    }
+
+    fn synced(&self) -> &Mutex<Synced> {
+        &self.handle.shared.synceds[self.group_index.0]
     }
 }
 
@@ -1069,6 +1155,13 @@ impl task::Schedule for Arc<Handle> {
 }
 
 impl Handle {
+    fn random_group(&self) -> GroupIndex {
+        let groups_number = self.shared.injects.len();
+        let rng_index = context::thread_rng_n(groups_number as u32);
+
+        GroupIndex(rng_index as usize)
+    }
+
     pub(super) fn schedule_task(&self, task: Notified, is_yield: bool) {
         with_current(|maybe_cx| {
             if let Some(cx) = maybe_cx {
@@ -1076,15 +1169,16 @@ impl Handle {
                 if self.ptr_eq(&cx.worker.handle) {
                     // And the current thread still holds a core
                     if let Some(core) = cx.core.borrow_mut().as_mut() {
-                        self.schedule_local(core, task, is_yield);
+                        self.schedule_local(cx.worker.group_index, core, task, is_yield);
                         return;
                     }
                 }
             }
 
             // Otherwise, use the inject queue.
-            self.push_remote_task(task);
-            self.notify_parked_remote();
+            let group = self.random_group();
+            self.push_remote_task(task, group);
+            self.notify_parked_remote(group);
         });
     }
 
@@ -1094,7 +1188,7 @@ impl Handle {
         }
     }
 
-    fn schedule_local(&self, core: &mut Core, task: Notified, is_yield: bool) {
+    fn schedule_local(&self, group: GroupIndex, core: &mut Core, task: Notified, is_yield: bool) {
         core.stats.inc_local_schedule_count();
 
         // Spawning from the worker thread. If scheduling a "yield" then the
@@ -1103,7 +1197,7 @@ impl Handle {
         // flexibility and the task may go to the front of the queue.
         let should_notify = if is_yield || !core.lifo_enabled {
             core.run_queue
-                .push_back_or_overflow(task, self, &mut core.stats);
+                .push_back_or_overflow(task, group, self, &mut core.stats);
             true
         } else {
             // Push to the LIFO slot
@@ -1112,7 +1206,7 @@ impl Handle {
 
             if let Some(prev) = prev {
                 core.run_queue
-                    .push_back_or_overflow(prev, self, &mut core.stats);
+                    .push_back_or_overflow(prev, group, self, &mut core.stats);
             }
 
             core.lifo_slot = Some(task);
@@ -1124,52 +1218,57 @@ impl Handle {
         // scheduling is from a resource driver. As notifications often come in
         // batches, the notification is delayed until the park is complete.
         if should_notify && core.park.is_some() {
-            self.notify_parked_local();
+            self.notify_parked_local(group);
         }
     }
 
-    fn next_remote_task(&self) -> Option<Notified> {
-        if self.shared.inject.is_empty() {
+    fn next_remote_task(&self, group: GroupIndex) -> Option<Notified> {
+        // TODO(i.Erin) how to fetch tasks?
+        if self.shared.inject(group).is_empty() {
             return None;
         }
 
-        let mut synced = self.shared.synced.lock();
+        let mut synced = self.shared.synced(group).lock();
         // safety: passing in correct `idle::Synced`
-        unsafe { self.shared.inject.pop(&mut synced.inject) }
+        unsafe { self.shared.inject(group).pop(&mut synced.inject) }
     }
 
-    fn push_remote_task(&self, task: Notified) {
+    fn push_remote_task(&self, task: Notified, group: GroupIndex) {
         self.shared.scheduler_metrics.inc_remote_schedule_count();
 
-        let mut synced = self.shared.synced.lock();
+        let mut synced = self.shared.synced(group).lock();
         // safety: passing in correct `idle::Synced`
         unsafe {
-            self.shared.inject.push(&mut synced.inject, task);
+            self.shared.inject(group).push(&mut synced.inject, task);
         }
     }
 
-    pub(super) fn close(&self) {
+    pub(super) fn close(&self, group: GroupIndex) {
         if self
             .shared
-            .inject
-            .close(&mut self.shared.synced.lock().inject)
+            .inject(group)
+            .close(&mut self.shared.synced(group).lock().inject)
         {
             self.notify_all();
         }
     }
 
-    fn notify_parked_local(&self) {
+    fn notify_parked_local(&self, group: GroupIndex) {
         super::counters::inc_num_inc_notify_local();
 
-        if let Some(index) = self.shared.idle.worker_to_notify(&self.shared) {
+        if let Some(index) = self.idle(group).worker_to_notify(&self.shared, group) {
             super::counters::inc_num_unparks_local();
-            self.shared.remotes[index].unpark.unpark(&self.driver);
+            self.remote(self.global_index(index, group))
+                .unpark
+                .unpark(&self.driver);
         }
     }
 
-    fn notify_parked_remote(&self) {
-        if let Some(index) = self.shared.idle.worker_to_notify(&self.shared) {
-            self.shared.remotes[index].unpark.unpark(&self.driver);
+    fn notify_parked_remote(&self, group: GroupIndex) {
+        if let Some(index) = self.idle(group).worker_to_notify(&self.shared, group) {
+            self.remote(self.global_index(index, group))
+                .unpark
+                .unpark(&self.driver);
         }
     }
 
@@ -1179,24 +1278,25 @@ impl Handle {
         }
     }
 
-    fn notify_if_work_pending(&self) {
+    fn notify_if_work_pending(&self, group: GroupIndex) {
+        // TODO(i.Erin) notify all or group only?
         for remote in &self.shared.remotes[..] {
             if !remote.steal.is_empty() {
-                self.notify_parked_local();
+                self.notify_parked_local(group);
                 return;
             }
         }
 
-        if !self.shared.inject.is_empty() {
-            self.notify_parked_local();
+        if !self.shared.inject(group).is_empty() {
+            self.notify_parked_local(group);
         }
     }
 
-    fn transition_worker_from_searching(&self) {
-        if self.shared.idle.transition_worker_from_searching() {
+    fn transition_worker_from_searching(&self, group: GroupIndex) {
+        if self.idle(group).transition_worker_from_searching() {
             // We are the final searching worker. Because work was found, we
             // need to notify another worker.
-            self.notify_parked_local();
+            self.notify_parked_local(group);
         }
     }
 
@@ -1204,7 +1304,7 @@ impl Handle {
     /// its core back into its handle.
     ///
     /// If all workers have reached this point, the final cleanup is performed.
-    fn shutdown_core(&self, core: Box<Core>) {
+    fn shutdown_core(&self, core: Box<Core>, group: GroupIndex) {
         let mut cores = self.shared.shutdown_cores.lock();
         cores.push(core);
 
@@ -1221,7 +1321,7 @@ impl Handle {
         // Drain the injection queue
         //
         // We already shut down every task, so we can simply drop the tasks.
-        while let Some(task) = self.next_remote_task() {
+        while let Some(task) = self.next_remote_task(group) {
             drop(task);
         }
     }
@@ -1229,19 +1329,31 @@ impl Handle {
     fn ptr_eq(&self, other: &Handle) -> bool {
         std::ptr::eq(self, other)
     }
-}
 
-impl Overflow<Arc<Handle>> for Handle {
-    fn push(&self, task: task::Notified<Arc<Handle>>) {
-        self.push_remote_task(task);
+    fn remote(&self, global_index: GlobalIndex) -> &Remote {
+        &self.shared.remotes[global_index.0]
     }
 
-    fn push_batch<I>(&self, iter: I)
+    fn idle(&self, group: GroupIndex) -> &Idle {
+        &self.shared.idles[group.0]
+    }
+
+    fn global_index(&self, local_index: LocalIndex, group_index: GroupIndex) -> GlobalIndex {
+        GlobalIndex::new(local_index, group_index, self.shared.group_size)
+    }
+}
+
+impl OverflowShard<Arc<Handle>> for Handle {
+    fn push(&self, task: task::Notified<Arc<Handle>>, group: GroupIndex) {
+        self.push_remote_task(task, group);
+    }
+
+    fn push_batch<I>(&self, iter: I, group: GroupIndex)
     where
         I: Iterator<Item = task::Notified<Arc<Handle>>>,
     {
         unsafe {
-            self.shared.inject.push_batch(self, iter);
+            self.shared.inject(group).push_batch(group, self, iter);
         }
     }
 }
@@ -1256,12 +1368,12 @@ impl<'a> AsMut<inject::Synced> for InjectGuard<'a> {
     }
 }
 
-impl<'a> Lock<inject::Synced> for &'a Handle {
+impl<'a> LockShard<inject::Synced> for &'a Handle {
     type Handle = InjectGuard<'a>;
 
-    fn lock(self) -> Self::Handle {
+    fn lock(self, group: GroupIndex) -> Self::Handle {
         InjectGuard {
-            lock: self.shared.synced.lock(),
+            lock: self.shared.synced(group).lock(),
         }
     }
 }

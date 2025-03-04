@@ -1,4 +1,4 @@
-use crate::runtime::scheduler::multi_thread::{queue, Stats};
+use crate::runtime::scheduler::multi_thread::{queue, GroupIndex, Stats};
 use crate::runtime::task::{self, Schedule, Task, TaskHarnessScheduleHooks};
 
 use std::cell::RefCell;
@@ -32,19 +32,20 @@ fn new_stats() -> Stats {
 #[test]
 fn fits_256_one_at_a_time() {
     let (_, mut local) = queue::local();
-    let inject = RefCell::new(vec![]);
+    let inject = RefCell::new(vec![vec![]]);
     let mut stats = new_stats();
+    let first_group = GroupIndex::new(0);
 
     for _ in 0..256 {
         let (task, _) = super::unowned(async {});
-        local.push_back_or_overflow(task, &inject, &mut stats);
+        local.push_back_or_overflow(task, first_group, &inject, &mut stats);
     }
 
     cfg_unstable_metrics! {
         assert_metrics!(stats, overflow_count == 0);
     }
 
-    assert!(inject.borrow_mut().pop().is_none());
+    assert!(inject.borrow_mut().iter_mut().any(|v| v.pop().is_none()));
 
     while local.pop().is_some() {}
 }
@@ -90,27 +91,29 @@ fn fits_256_all_in_chunks() {
 #[test]
 fn overflow() {
     let (_, mut local) = queue::local();
-    let inject = RefCell::new(vec![]);
+    let inject = RefCell::new(vec![vec![], vec![]]);
     let mut stats = new_stats();
+    const NTASK: usize = 1025;
 
-    for _ in 0..257 {
+    for i in 0..NTASK {
         let (task, _) = super::unowned(async {});
-        local.push_back_or_overflow(task, &inject, &mut stats);
+        let group = GroupIndex::new(i % inject.borrow().len());
+        local.push_back_or_overflow(task, group, &inject, &mut stats);
     }
 
     cfg_unstable_metrics! {
-        assert_metrics!(stats, overflow_count == 1);
+        assert_metrics!(stats, overflow_count == 4);
     }
 
     let mut n = 0;
 
-    n += inject.borrow_mut().drain(..).count();
+    inject.borrow().iter().for_each(|v| n += v.len());
 
     while local.pop().is_some() {
         n += 1;
     }
 
-    assert_eq!(n, 257);
+    assert_eq!(n, NTASK);
 }
 
 #[test]
@@ -119,11 +122,11 @@ fn steal_batch() {
 
     let (steal1, mut local1) = queue::local();
     let (_, mut local2) = queue::local();
-    let inject = RefCell::new(vec![]);
+    let inject = RefCell::new(vec![vec![]]);
 
     for _ in 0..4 {
         let (task, _) = super::unowned(async {});
-        local1.push_back_or_overflow(task, &inject, &mut stats);
+        local1.push_back_or_overflow(task, GroupIndex::new(0), &inject, &mut stats);
     }
 
     assert!(steal1.steal_into(&mut local2, &mut stats).is_some());
@@ -165,7 +168,7 @@ fn stress1() {
 
     for _ in 0..NUM_ITER {
         let (steal, mut local) = queue::local();
-        let inject = RefCell::new(vec![]);
+        let inject = RefCell::new(vec![vec![]]);
 
         let th = thread::spawn(move || {
             let mut stats = new_stats();
@@ -196,7 +199,7 @@ fn stress1() {
         for _ in 0..NUM_LOCAL {
             for _ in 0..NUM_PUSH {
                 let (task, _) = super::unowned(async {});
-                local.push_back_or_overflow(task, &inject, &mut stats);
+                local.push_back_or_overflow(task, GroupIndex::new(0), &inject, &mut stats);
             }
 
             for _ in 0..NUM_POP {
@@ -208,7 +211,10 @@ fn stress1() {
             }
         }
 
-        n += inject.borrow_mut().drain(..).count();
+        inject
+            .borrow_mut()
+            .iter_mut()
+            .for_each(|v| n += v.drain(..).count());
 
         n += th.join().unwrap();
 
@@ -226,7 +232,7 @@ fn stress2() {
 
     for _ in 0..NUM_ITER {
         let (steal, mut local) = queue::local();
-        let inject = RefCell::new(vec![]);
+        let inject = RefCell::new(vec![vec![]]);
 
         let th = thread::spawn(move || {
             let mut stats = new_stats();
@@ -252,13 +258,16 @@ fn stress2() {
 
         for i in 0..NUM_TASKS {
             let (task, _) = super::unowned(async {});
-            local.push_back_or_overflow(task, &inject, &mut stats);
+            local.push_back_or_overflow(task, GroupIndex::new(0), &inject, &mut stats);
 
             if i % 128 == 0 && local.pop().is_some() {
                 num_pop += 1;
             }
 
-            num_pop += inject.borrow_mut().drain(..).count();
+            inject
+                .borrow_mut()
+                .iter_mut()
+                .for_each(|v| num_pop += v.drain(..).count());
         }
 
         num_pop += th.join().unwrap();
@@ -267,7 +276,10 @@ fn stress2() {
             num_pop += 1;
         }
 
-        num_pop += inject.borrow_mut().drain(..).count();
+        inject
+            .borrow_mut()
+            .iter_mut()
+            .for_each(|v| num_pop += v.drain(..).count());
 
         assert_eq!(num_pop, NUM_TASKS);
     }

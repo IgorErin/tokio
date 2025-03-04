@@ -16,7 +16,7 @@ cfg_rt_multi_thread! {
     pub(crate) use block_in_place::block_in_place;
 
     mod lock;
-    use lock::Lock;
+    use lock::LockShard;
 
     pub(crate) mod multi_thread;
     pub(crate) use multi_thread::MultiThread;
@@ -233,8 +233,8 @@ cfg_rt! {
             match_flavor!(self, Handle(handle) => handle.num_alive_tasks())
         }
 
-        pub(crate) fn injection_queue_depth(&self) -> usize {
-            match_flavor!(self, Handle(handle) => handle.injection_queue_depth())
+        pub(crate) fn injection_queue_depth(&self, group: usize) -> usize {
+            match_flavor!(self, Handle(handle) => handle.injection_queue_depth(group))
         }
     }
 
