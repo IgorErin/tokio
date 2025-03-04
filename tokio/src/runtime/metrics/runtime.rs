@@ -92,8 +92,8 @@ impl RuntimeMetrics {
     ///     println!("{} tasks currently pending in the runtime's global queue", n);
     /// }
     /// ```
-    pub fn global_queue_depth(&self) -> usize {
-        self.handle.inner.injection_queue_depth()
+    pub fn global_queue_depth(&self, group: usize) -> usize {
+        self.handle.inner.injection_queue_depth(group)
     }
 
     cfg_unstable_metrics! {
