@@ -1,6 +1,6 @@
 use crate::future::Future;
 use crate::loom::sync::Arc;
-use crate::runtime::scheduler::multi_thread::worker;
+use crate::runtime::scheduler::multi_thread::{worker, GroupIndex};
 use crate::runtime::{
     blocking, driver,
     task::{self, JoinHandle},
@@ -44,8 +44,12 @@ impl Handle {
         Self::bind_new_task(me, future, id)
     }
 
+    fn groups(&self) -> impl Iterator<Item = GroupIndex> {
+        (0..self.shared.injects.len()).map(GroupIndex::new)
+    }
+
     pub(crate) fn shutdown(&self) {
-        self.close();
+        self.groups().for_each(|i| self.close(i));
     }
 
     pub(super) fn bind_new_task<T>(me: &Arc<Self>, future: T, id: task::Id) -> JoinHandle<T::Output>

@@ -1,14 +1,15 @@
 use super::{Shared, Synced};
 
-use crate::runtime::scheduler::Lock;
+use crate::runtime::scheduler::multi_thread::GroupIndex;
+use crate::runtime::scheduler::LockShard;
 use crate::runtime::task;
 
 use std::sync::atomic::Ordering::Release;
 
-impl<'a> Lock<Synced> for &'a mut Synced {
+impl<'a> LockShard<Synced> for &'a mut Synced {
     type Handle = &'a mut Synced;
 
-    fn lock(self) -> Self::Handle {
+    fn lock(self, _group: GroupIndex) -> Self::Handle {
         self
     }
 }
@@ -26,9 +27,9 @@ impl<T: 'static> Shared<T> {
     ///
     /// Must be called with the same `Synced` instance returned by `Inject::new`
     #[inline]
-    pub(crate) unsafe fn push_batch<L, I>(&self, shared: L, mut iter: I)
+    pub(crate) unsafe fn push_batch<L, I>(&self, group: GroupIndex, shared: L, mut iter: I)
     where
-        L: Lock<Synced>,
+        L: LockShard<Synced>,
         I: Iterator<Item = task::Notified<T>>,
     {
         let first = match iter.next() {
@@ -55,7 +56,7 @@ impl<T: 'static> Shared<T> {
 
         // Now that the tasks are linked together, insert them into the
         // linked list.
-        self.push_batch_inner(shared, first, prev, counter);
+        self.push_batch_inner(group, shared, first, prev, counter);
     }
 
     /// Inserts several tasks that have been linked together into the queue.
@@ -65,16 +66,17 @@ impl<T: 'static> Shared<T> {
     #[inline]
     unsafe fn push_batch_inner<L>(
         &self,
+        group: GroupIndex,
         shared: L,
         batch_head: task::RawTask,
         batch_tail: task::RawTask,
         num: usize,
     ) where
-        L: Lock<Synced>,
+        L: LockShard<Synced>,
     {
         debug_assert!(unsafe { batch_tail.get_queue_next().is_none() });
 
-        let mut synced = shared.lock();
+        let mut synced = shared.lock(group);
 
         if synced.as_mut().is_closed {
             drop(synced);
