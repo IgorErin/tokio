@@ -662,7 +662,7 @@ cfg_rt! {
         let id = context::with_scheduler(|ctx| match ctx {
             Some(scheduler::Context::CurrentThread(_ctx)) => 0,
             #[cfg(feature = "rt-multi-thread")]
-            Some(scheduler::Context::MultiThread(ctx)) => ctx.get_worker_index() as u32,
+            Some(scheduler::Context::MultiThread(ctx)) => ctx.get_worker_index().to_u32(),
             #[cfg(all(tokio_unstable, feature = "rt-multi-thread"))]
             Some(scheduler::Context::MultiThreadAlt(ctx)) => ctx.get_worker_index() as u32,
             None => context::thread_rng_n(shard_size),

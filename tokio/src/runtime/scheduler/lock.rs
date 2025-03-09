@@ -1,6 +1,8 @@
 /// A lock (mutex) yielding generic data.
-pub(crate) trait Lock<T> {
+use super::multi_thread::GroupIndex;
+
+pub(crate) trait LockShard<T> {
     type Handle: AsMut<T>;
 
-    fn lock(self) -> Self::Handle;
+    fn lock(self, group: GroupIndex) -> Self::Handle;
 }

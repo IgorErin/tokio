@@ -4,6 +4,7 @@
 #![cfg(not(miri))]
 
 // Tests to run on both current-thread & multi-thread runtime variants.
+// NUM_WORKERS --- workers count in one group TODO(i.Erin) workstealing across groups
 
 macro_rules! rt_test {
     ($($t:tt)*) => {
@@ -39,6 +40,23 @@ macro_rules! rt_test {
         }
 
         #[cfg(not(target_os = "wasi"))] // Wasi doesn't support threads
+        mod threaded_scheduler_4_threads_2_groups {
+            $($t)*
+
+            const NUM_WORKERS: usize = 4;
+
+            fn rt() -> Arc<Runtime> {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(4)
+                    .worker_groups(2)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .into()
+            }
+        }
+
+        #[cfg(not(target_os = "wasi"))] // Wasi doesn't support threads
         mod threaded_scheduler_1_thread {
             $($t)*
 
@@ -47,6 +65,23 @@ macro_rules! rt_test {
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(1)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .into()
+            }
+        }
+
+        #[cfg(not(target_os = "wasi"))] // Wasi doesn't support threads
+        mod threaded_scheduler_1_thread_8_groups {
+            $($t)*
+
+            const NUM_WORKERS: usize = 1;
+
+            fn rt() -> Arc<Runtime> {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .worker_groups(8)
                     .enable_all()
                     .build()
                     .unwrap()

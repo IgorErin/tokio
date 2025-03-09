@@ -1,4 +1,5 @@
 use crate::runtime::scheduler::inject;
+use crate::runtime::scheduler::multi_thread::GroupIndex;
 
 #[test]
 fn push_and_pop() {
@@ -28,6 +29,7 @@ fn push_batch_and_pop() {
 
     unsafe {
         inject.push_batch(
+            GroupIndex::new(0),
             &mut inject_synced,
             (0..10).map(|_| super::unowned(async {}).0),
         );
@@ -44,6 +46,7 @@ fn pop_n_drains_on_drop() {
 
     unsafe {
         inject.push_batch(
+            GroupIndex::new(0),
             &mut inject_synced,
             (0..10).map(|_| super::unowned(async {}).0),
         );

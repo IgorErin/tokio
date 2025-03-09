@@ -1,8 +1,9 @@
-use super::Shared;
+use super::{GroupIndex, Shared};
 
 impl Shared {
-    pub(crate) fn injection_queue_depth(&self) -> usize {
-        self.inject.len()
+    pub(crate) fn injection_queue_depth(&self, group: usize) -> usize {
+        let group_index = GroupIndex::new(group);
+        self.inject(group_index).len()
     }
 }
 
