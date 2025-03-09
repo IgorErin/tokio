@@ -44,7 +44,7 @@ impl Handle {
         Self::bind_new_task(me, future, id)
     }
 
-    fn groups(&self) -> impl Iterator<Item = GroupIndex> {
+    pub(crate) fn groups(&self) -> impl Iterator<Item = GroupIndex> {
         (0..self.shared.injects.len()).map(GroupIndex::new)
     }
 

@@ -206,7 +206,7 @@ pub(crate) struct Shared {
     /// The core is **not** placed back in the worker to avoid it from being
     /// stolen by a thread that was spawned as part of `block_in_place`.
     #[allow(clippy::vec_box)] // we're moving an already-boxed value
-    shutdown_cores: Mutex<Vec<Box<Core>>>,
+    shutdown_cores: Box<[Mutex<Vec<Box<Core>>>]>,
 
     /// The number of cores that have observed the trace signal.
     pub(super) trace_status: TraceStatus,
@@ -333,6 +333,8 @@ pub(super) fn create(
         }));
     }
 
+    let shutdown_cores: Vec<_> = (0..worker_groups).map(|_| Mutex::new(vec![])).collect();
+
     let remotes_len = remotes.len();
     let handle = Arc::new(Handle {
         task_hooks: TaskHooks::from_config(&config),
@@ -343,7 +345,7 @@ pub(super) fn create(
             group_size: GroupSize(size),
             owned: OwnedTasks::new(size),
             synceds: synceds.into_boxed_slice(),
-            shutdown_cores: Mutex::new(vec![]),
+            shutdown_cores: shutdown_cores.into_boxed_slice(),
             trace_status: TraceStatus::new(remotes_len),
             config,
             scheduler_metrics: SchedulerMetrics::new(),
@@ -928,21 +930,6 @@ impl Core {
         self.lifo_slot.take().or_else(|| self.run_queue.pop())
     }
 
-    fn siblings(&mut self, worker: &Worker) -> impl Iterator<Item = GlobalIndex> {
-        let group_size = worker.handle.shared.group_size.0;
-        let start = self.rand.fastrand_n(group_size as u32) as usize;
-
-        let offset = worker.group_index.0 * group_size;
-        let self_index = worker.global_index;
-
-        (start..start + group_size)
-            .map(move |i| {
-                let local_index = i % group_size;
-                GlobalIndex(offset + local_index)
-            })
-            .filter(move |ind| ind != &self_index)
-    }
-
     /// Function responsible for stealing tasks from another worker
     ///
     /// Note: Only if less than half the workers are searching for tasks to steal
@@ -953,7 +940,7 @@ impl Core {
             return None;
         }
 
-        for i in self.siblings(worker) {
+        for i in worker.rng_siblings(&mut self.rand) {
             let target = worker.handle.remote(i);
             if let Some(task) = target
                 .steal
@@ -1132,6 +1119,27 @@ impl Worker {
     fn synced(&self) -> &Mutex<Synced> {
         &self.handle.shared.synceds[self.group_index.0]
     }
+
+    fn group(&self) -> impl Iterator<Item = GlobalIndex> {
+        let group_size = self.handle.shared.group_size.0;
+        let offset = self.group_index.0 * group_size;
+
+        (0..group_size).map(move |i| {
+            let local_index = i % group_size;
+            GlobalIndex(offset + local_index)
+        })
+    }
+
+    fn rng_siblings(&self, rand: &mut FastRand) -> impl Iterator<Item = GlobalIndex> {
+        let self_index = self.global_index;
+        let group_size = self.handle.shared.group_size.0;
+
+        let start = rand.fastrand_n(group_size as u32) as usize;
+
+        self.group()
+            .map(move |GlobalIndex(ind)| GlobalIndex((ind + start) % group_size))
+            .filter(move |g| g != &self_index)
+    }
 }
 
 // TODO: Move `Handle` impls into handle.rs
@@ -1305,11 +1313,11 @@ impl Handle {
     /// its core back into its handle.
     ///
     /// If all workers have reached this point, the final cleanup is performed.
-    fn shutdown_core(&self, core: Box<Core>, group: GroupIndex) {
-        let mut cores = self.shared.shutdown_cores.lock();
+    fn shutdown_core(&self, core: Box<Core>, group_index: GroupIndex) {
+        let mut cores = self.shutdowns(group_index).lock();
         cores.push(core);
 
-        if cores.len() != self.shared.remotes.len() {
+        if cores.len() != self.shared.group_size.0 {
             return;
         }
 
@@ -1322,7 +1330,7 @@ impl Handle {
         // Drain the injection queue
         //
         // We already shut down every task, so we can simply drop the tasks.
-        while let Some(task) = self.next_remote_task(group) {
+        while let Some(task) = self.next_remote_task(group_index) {
             drop(task);
         }
     }
@@ -1341,6 +1349,10 @@ impl Handle {
 
     fn global_index(&self, local_index: LocalIndex, group_index: GroupIndex) -> GlobalIndex {
         GlobalIndex::new(local_index, group_index, self.shared.group_size)
+    }
+
+    fn shutdowns(&self, group_index: GroupIndex) -> &Mutex<Vec<Box<Core>>> {
+        &self.shared.shutdown_cores[group_index.0]
     }
 }
 
