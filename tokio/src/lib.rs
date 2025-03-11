@@ -549,6 +549,7 @@ cfg_not_sync! {
 pub mod task;
 cfg_rt! {
     pub use task::spawn;
+    pub use task::spawn_into;
 }
 
 cfg_time! {

@@ -768,6 +768,7 @@ rt_test! {
 
         let flag = Arc::new(AtomicBool::new(false));
         let barrier = Arc::new(Barrier::new(NUM_WORKERS));
+        const GROUP: usize = 0;
 
         rt.block_on(async {
             // Make sure other workers cannot steal tasks
@@ -776,20 +777,20 @@ rt_test! {
                 let flag = flag.clone();
                 let barrier = barrier.clone();
 
-                tokio::spawn(async move {
+                tokio::spawn_into(async move {
                     barrier.wait();
 
                     while !flag.load(SeqCst) {
                         std::thread::sleep(std::time::Duration::from_millis(1));
                     }
-                });
+                }, GROUP);
             }
 
             barrier.wait();
 
             let (fail_test, fail_test_recv) = oneshot::channel::<()>();
             let flag_clone = flag.clone();
-            let jh = tokio::spawn(async move {
+            let jh = tokio::spawn_into(async move {
                 // Create a TCP listener
                 let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
                 let addr = listener.local_addr().unwrap();
@@ -820,7 +821,7 @@ rt_test! {
                         flag_clone.store(true, SeqCst);
                     }
                 );
-            });
+            }, GROUP);
 
             // Wait until the spawned task completes or fails. If no message is
             // sent on `fail_test`, then the test succeeds. Otherwise, it fails.

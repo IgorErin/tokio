@@ -170,14 +170,14 @@ cfg_rt! {
     {
         let fut_size = std::mem::size_of::<F>();
         if fut_size > BOX_FUTURE_THRESHOLD {
-            spawn_inner(Box::pin(future), SpawnMeta::new_unnamed(fut_size))
+            spawn_inner(Box::pin(future), SpawnMeta::new_unnamed(fut_size), None)
         } else {
-            spawn_inner(future, SpawnMeta::new_unnamed(fut_size))
+            spawn_inner(future, SpawnMeta::new_unnamed(fut_size), None)
         }
     }
 
     #[track_caller]
-    pub(super) fn spawn_inner<T>(future: T, meta: SpawnMeta<'_>) -> JoinHandle<T::Output>
+    pub(super) fn spawn_inner<T>(future: T, meta: SpawnMeta<'_>, group: Option<usize>) -> JoinHandle<T::Output>
     where
         T: Future + Send + 'static,
         T::Output: Send + 'static,
@@ -199,9 +199,24 @@ cfg_rt! {
         let id = task::Id::next();
         let task = crate::util::trace::task(future, "task", meta, id.as_u64());
 
-        match context::with_current(|handle| handle.spawn(task, id)) {
+        match context::with_current(|handle| handle.spawn(task, id, group)) {
             Ok(join_handle) => join_handle,
             Err(e) => panic!("{}", e),
+        }
+    }
+
+    /// TODO(i.Erin)
+    #[track_caller]
+    pub fn spawn_into<F>(future: F, group: usize) -> JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        let fut_size = std::mem::size_of::<F>();
+        if fut_size > BOX_FUTURE_THRESHOLD {
+            spawn_inner(Box::pin(future), SpawnMeta::new_unnamed(fut_size), Some(group))
+        } else {
+            spawn_inner(future, SpawnMeta::new_unnamed(fut_size), Some(group))
         }
     }
 }

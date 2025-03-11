@@ -36,19 +36,29 @@ pub(crate) struct Handle {
 
 impl Handle {
     /// Spawns a future onto the thread pool
-    pub(crate) fn spawn<F>(me: &Arc<Self>, future: F, id: task::Id) -> JoinHandle<F::Output>
+    pub(crate) fn spawn<F>(
+        me: &Arc<Self>,
+        future: F,
+        id: task::Id,
+        group: Option<usize>,
+    ) -> JoinHandle<F::Output>
     where
         F: crate::future::Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        Self::bind_new_task(me, future, id)
+        Self::bind_new_task(me, future, id, group)
     }
 
     pub(crate) fn shutdown(&self) {
         self.close();
     }
 
-    pub(super) fn bind_new_task<T>(me: &Arc<Self>, future: T, id: task::Id) -> JoinHandle<T::Output>
+    pub(super) fn bind_new_task<T>(
+        me: &Arc<Self>,
+        future: T,
+        id: task::Id,
+        group: Option<usize>,
+    ) -> JoinHandle<T::Output>
     where
         T: Future + Send + 'static,
         T::Output: Send + 'static,
@@ -60,7 +70,7 @@ impl Handle {
             _phantom: Default::default(),
         });
 
-        me.schedule_option_task_without_yield(notified);
+        me.schedule_option_task_without_yield(notified, group);
 
         handle
     }
