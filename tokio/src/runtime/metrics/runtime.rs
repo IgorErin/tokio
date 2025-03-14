@@ -48,6 +48,11 @@ impl RuntimeMetrics {
         self.handle.inner.num_workers()
     }
 
+    /// TODO(i.Erin)
+    pub fn num_groups(&self) -> usize {
+        self.handle.inner.num_groups()
+    }
+
     /// Returns the current number of alive tasks in the runtime.
     ///
     /// This counter increases when a task is spawned and decreases when a

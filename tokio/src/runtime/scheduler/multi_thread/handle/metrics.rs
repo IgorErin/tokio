@@ -9,6 +9,10 @@ impl Handle {
         self.shared.group_size
     }
 
+    pub(crate) fn num_groups(&self) -> usize {
+        self.shared.groups.len()
+    }
+
     pub(crate) fn num_alive_tasks(&self) -> usize {
         self.shared.owned.num_alive_tasks()
     }

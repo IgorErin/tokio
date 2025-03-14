@@ -85,16 +85,21 @@ fn global_queue_depth_multi_thread() {
 fn try_block_threaded(rt: &Runtime) -> Result<Vec<mpsc::Sender<()>>, mpsc::RecvTimeoutError> {
     let (tx, rx) = mpsc::channel();
 
-    let blocking_tasks = (0..rt.metrics().num_workers())
-        .map(|_| {
+    let worker_threads = rt.metrics().num_workers() * rt.metrics().num_groups();
+    let blocking_tasks = (0..rt.metrics().num_workers() * rt.metrics().num_groups())
+        .map(|worker| {
+            // println!("worker: {}", worker);
             let tx = tx.clone();
             let (task, barrier) = mpsc::channel();
 
             // Spawn a task per runtime worker to block it.
-            rt.spawn(async move {
-                tx.send(()).ok();
-                barrier.recv().ok();
-            });
+            rt.spawn_into(
+                async move {
+                    tx.send(()).ok();
+                    barrier.recv().ok();
+                },
+                worker % rt.metrics().num_groups(),
+            );
 
             task
         })
@@ -105,7 +110,7 @@ fn try_block_threaded(rt: &Runtime) -> Result<Vec<mpsc::Sender<()>>, mpsc::RecvT
     //
     // If this times out we were unsuccessful in blocking the runtime and hit
     // a deadlock instead (which might happen and is expected behaviour).
-    for _ in 0..rt.metrics().num_workers() {
+    for _ in 0..worker_threads {
         rx.recv_timeout(Duration::from_secs(1))?;
     }
 

@@ -234,6 +234,16 @@ cfg_rt! {
             }
         }
 
+        pub (crate) fn num_groups(&self) -> usize {
+            match self {
+                Handle::CurrentThread(_) => 1,
+                #[cfg(feature = "rt-multi-thread")]
+                Handle::MultiThread(handle) => handle.num_groups(),
+                #[cfg(all(tokio_unstable, feature = "rt-multi-thread"))]
+                Handle::MultiThreadAlt(_) => 1,
+            }
+        }
+
         pub(crate) fn num_alive_tasks(&self) -> usize {
             match_flavor!(self, Handle(handle) => handle.num_alive_tasks())
         }

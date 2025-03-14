@@ -1112,8 +1112,9 @@ impl Handle {
                 }
             }
 
-            // TODO(i.Erin) pick random queue or user specified queue
-            let group = &self.shared.groups[group.unwrap_or(0)];
+            let group = group
+                .map(|ind| &self.shared.groups[ind])
+                .unwrap_or_else(|| self.rng_group());
             // Otherwise, use the inject queue.
             self.shared.scheduler_metrics.inc_remote_schedule_count();
             group.push_remote_task(task);
@@ -1135,6 +1136,13 @@ impl Handle {
         for group in self.shared.groups.iter() {
             group.close(&self.driver);
         }
+    }
+
+    fn rng_group(&self) -> &Group {
+        let groups = self.shared.groups.len();
+        let rng_index = context::thread_rng_n(groups as u32);
+
+        &self.shared.groups[rng_index as usize]
     }
 
     /// Signals that a worker has observed the shutdown signal and has replaced
