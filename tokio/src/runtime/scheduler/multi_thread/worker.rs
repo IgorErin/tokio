@@ -1099,6 +1099,7 @@ impl task::Schedule for Arc<Handle> {
 
 impl Handle {
     pub(super) fn schedule_task(&self, task: Notified, is_yield: bool, group: Option<usize>) {
+        unreachable!();
         with_current(|maybe_cx| {
             if let Some(cx) = maybe_cx {
                 // Make sure the task is part of the **current** scheduler.
@@ -1112,9 +1113,13 @@ impl Handle {
                 }
             }
 
+            assert!(group.is_some());
             let group = group
                 .map(|ind| &self.shared.groups[ind])
-                .unwrap_or_else(|| self.rng_group());
+                .unwrap_or_else(|| {
+                    unreachable!();
+                    self.rng_group()
+                });
             // Otherwise, use the inject queue.
             self.shared.scheduler_metrics.inc_remote_schedule_count();
             group.push_remote_task(task);
