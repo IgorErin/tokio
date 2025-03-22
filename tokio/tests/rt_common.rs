@@ -770,6 +770,7 @@ rt_test! {
         let barrier = Arc::new(Barrier::new(NUM_WORKERS));
 
         rt.block_on(async {
+            let group = tokio::group(0);
             // Make sure other workers cannot steal tasks
             #[allow(clippy::reversed_empty_ranges)]
             for _ in 0..(NUM_WORKERS-1) {

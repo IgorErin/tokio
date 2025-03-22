@@ -204,4 +204,29 @@ cfg_rt! {
             Err(e) => panic!("{}", e),
         }
     }
+
+    /// TODO(i.Erin)
+    #[derive(Debug)]
+    pub struct SpawnGroup;
+
+    /// TODO(i.Erin)
+    pub fn group() -> SpawnGroup {
+        SpawnGroup
+    }
+
+    impl SpawnGroup {
+        /// TODO(i.Erin)
+        pub fn spawn<F>(&self, future: F) -> JoinHandle<F::Output>
+            where
+            F: Future + Send + 'static,
+            F::Output: Send + 'static,
+        {
+            let fut_size = std::mem::size_of::<F>();
+            if fut_size > BOX_FUTURE_THRESHOLD {
+                spawn_inner(Box::pin(future), SpawnMeta::new_unnamed(fut_size))
+            } else {
+                spawn_inner(future, SpawnMeta::new_unnamed(fut_size))
+            }
+        }
+    }
 }
