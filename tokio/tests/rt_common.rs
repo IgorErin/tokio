@@ -853,13 +853,14 @@ rt_test! {
         const GROUP: usize = 0;
 
         rt.block_on(async {
+            let group = tokio::group(GROUP);
             // Make sure other workers cannot steal tasks
             #[allow(clippy::reversed_empty_ranges)]
             for _ in 0..(NUM_WORKERS-1) {
                 let flag = flag.clone();
                 let barrier = barrier.clone();
 
-                tokio::spawn_into(GROUP, async move {
+                group.spawn(async move {
                     barrier.wait();
 
                     while !flag.load(SeqCst) {
@@ -872,7 +873,7 @@ rt_test! {
 
             let (fail_test, fail_test_recv) = oneshot::channel::<()>();
             let flag_clone = flag.clone();
-            let jh = tokio::spawn_into(GROUP, async move {
+            let jh = group.spawn(async move {
                 // Create a TCP listener
                 let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
                 let addr = listener.local_addr().unwrap();
@@ -1538,7 +1539,7 @@ rt_test! {
             let _gurad = rt.enter();
             let mut all_threads = Vec::with_capacity(NUM_WORKERS * NUM_GROUPS);
             for group in 0..NUM_GROUPS {
-                let threads = get_group_threads(group);
+                let threads = get_group_threads(tokio::group(group));
                 all_threads.extend_from_slice(&threads);
             }
 
@@ -1549,7 +1550,7 @@ rt_test! {
             }
         }
 
-        fn get_group_threads(group: usize) -> Vec<std::thread::ThreadId>  {
+        fn get_group_threads(group: tokio::SpawnGroup) -> Vec<std::thread::ThreadId>  {
             let (tx, rx) = std::sync::mpsc::sync_channel(0);
             let counter = Arc::new(AtomicUsize::new(0));
 
@@ -1557,7 +1558,7 @@ rt_test! {
                 let counter = Arc::clone(&counter);
                 let tx = tx.clone();
 
-                tokio::spawn_into(group, async move {
+                group.spawn(async move {
                     counter.fetch_add(1, SeqCst);
                     tx.send(std::thread::current().id()).unwrap();
                 });
@@ -1590,18 +1591,18 @@ rt_test! {
 
                 let rt = rt();
                 rt.block_on(async {
-                    let groups_pollers: Vec<_> = (0..NUM_GROUPS).map(block_group).collect();
+                    let groups_pollers: Vec<_> = (0..NUM_GROUPS).map(tokio::group).map(block_group).collect();
 
                     groups_pollers[fst_group].recv().unwrap();
                     groups_pollers[snd_group].recv().unwrap();
 
                     let (tx, mut rx) = mpsc::channel(1);
 
-                    tokio::spawn_into(fst_group, async move {
+                    tokio::group(fst_group).spawn(async move {
                         tx.send(()).await.unwrap();
                     });
 
-                    tokio::spawn_into(snd_group, async move {
+                    tokio::group(snd_group).spawn(async move {
                         rx.recv().await.unwrap();
                     }).await.unwrap();
 
@@ -1618,14 +1619,14 @@ rt_test! {
             }
         }
 
-        fn block_group(group: usize) -> std::sync::mpsc::Receiver<()> {
+        fn block_group(group: tokio::SpawnGroup) -> std::sync::mpsc::Receiver<()> {
             let (tx, rx) = std::sync::mpsc::sync_channel(0);
             let counter = Arc::new(AtomicUsize::new(0));
 
             for _ in 0..NUM_WORKERS {
                 let counter = Arc::clone(&counter);
                 let tx = tx.clone();
-                tokio::spawn_into(group, async move {
+                group.spawn(async move {
                     counter.fetch_add(1, SeqCst);
                     tx.send(()).unwrap();
                 });

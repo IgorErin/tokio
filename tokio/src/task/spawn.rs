@@ -206,17 +206,31 @@ cfg_rt! {
     }
 
     /// TODO(i.Erin)
-    #[track_caller]
-    pub fn spawn_into<F>(group: usize, future: F) -> JoinHandle<F::Output>
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static,
-    {
-        let fut_size = std::mem::size_of::<F>();
-        if fut_size > BOX_FUTURE_THRESHOLD {
-            spawn_inner(Box::pin(future), SpawnMeta::new_unnamed(fut_size), Some(group))
-        } else {
-            spawn_inner(future, SpawnMeta::new_unnamed(fut_size), Some(group))
+    #[derive(Debug)]
+    pub struct SpawnGroup {
+        group: usize,
+    }
+
+    /// TODO(i.Erin)
+    pub fn group(group: usize) -> SpawnGroup {
+        SpawnGroup {
+            group,
+        }
+    }
+
+    impl SpawnGroup {
+        /// TODO(i.Erin)
+        pub fn spawn<F>(&self, future: F) -> JoinHandle<F::Output>
+            where
+            F: Future + Send + 'static,
+            F::Output: Send + 'static,
+        {
+            let fut_size = std::mem::size_of::<F>();
+            if fut_size > BOX_FUTURE_THRESHOLD {
+                spawn_inner(Box::pin(future), SpawnMeta::new_unnamed(fut_size), Some(self.group))
+            } else {
+                spawn_inner(future, SpawnMeta::new_unnamed(fut_size), Some(self.group))
+            }
         }
     }
 }

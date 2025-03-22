@@ -274,7 +274,7 @@ cfg_rt! {
 
     mod spawn;
     pub use spawn::spawn;
-    pub use spawn::spawn_into;
+    pub use spawn::{group, SpawnGroup};
 
     cfg_rt_multi_thread! {
         pub use blocking::block_in_place;
