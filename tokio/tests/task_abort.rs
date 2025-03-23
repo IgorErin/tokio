@@ -293,8 +293,8 @@ fn test_join_error_debug() {
         let join_err_str = format!("{join_err:?}");
 
         assert!(
-            join_err_str.starts_with("JoinError::Panic(Id(")
-                && join_err_str.ends_with("), \"Format-args payload: 1234\", ...)"),
+            join_err_str.starts_with("JoinError::Panic(Id {")
+                && join_err_str.ends_with("}, \"Format-args payload: 1234\", ...)"),
             "Unexpected join_err_str {join_err_str:?}"
         );
 
@@ -306,8 +306,8 @@ fn test_join_error_debug() {
         let join_err_str = format!("{join_err:?}");
 
         assert!(
-            join_err_str.starts_with("JoinError::Panic(Id(")
-                && join_err_str.ends_with("), \"Const payload\", ...)"),
+            join_err_str.starts_with("JoinError::Panic(Id {")
+                && join_err_str.ends_with("}, \"Const payload\", ...)"),
             "Unexpected join_err_str {join_err_str:?}"
         );
 
@@ -319,7 +319,7 @@ fn test_join_error_debug() {
         let join_err_str = format!("{join_err:?}");
 
         assert!(
-            join_err_str.starts_with("JoinError::Panic(Id(") && join_err_str.ends_with("), ...)"),
+            join_err_str.starts_with("JoinError::Panic(Id {") && join_err_str.ends_with("}, ...)"),
             "Unexpected join_err_str {join_err_str:?}"
         );
     });

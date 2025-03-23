@@ -2,6 +2,54 @@ use crate::runtime::context;
 
 use std::{fmt, num::NonZeroU64};
 
+use crate::loom::sync::atomic::Ordering::Relaxed;
+use crate::loom::sync::atomic::StaticAtomicU64;
+
+/// TODO(i.Erin)
+#[cfg_attr(docsrs, doc(cfg(all(feature = "rt"))))]
+#[derive(Debug)]
+pub struct IdProvider {
+    global_id: NonZeroU64,
+    local_counter: StaticAtomicU64,
+}
+
+fn new_nonzero_u64(atomic: &StaticAtomicU64) -> NonZeroU64 {
+    loop {
+        let id = atomic.fetch_add(1, Relaxed);
+        if let Some(id) = NonZeroU64::new(id) {
+            return id;
+        }
+    }
+}
+
+impl IdProvider {
+    fn counter() -> &'static StaticAtomicU64 {
+        static NEXT_ID: StaticAtomicU64 = StaticAtomicU64::new(1);
+        &NEXT_ID
+    }
+
+    pub(crate) fn new() -> Self {
+        Self {
+            global_id: new_nonzero_u64(Self::counter()),
+            local_counter: StaticAtomicU64::new(1),
+        }
+    }
+
+    pub(crate) fn next_id(&self) -> Id {
+        Id {
+            global_id: self.global_id,
+            local_id: new_nonzero_u64(&self.local_counter),
+        }
+    }
+
+    pub(crate) fn new_id() -> Id {
+        Id {
+            global_id: new_nonzero_u64(Self::counter()),
+            local_id: unsafe { NonZeroU64::new_unchecked(1) },
+        }
+    }
+}
+
 /// An opaque ID that uniquely identifies a task relative to all other currently
 /// running tasks.
 ///
@@ -17,7 +65,10 @@ use std::{fmt, num::NonZeroU64};
 ///   the [`JoinHandle::id()`](crate::task::JoinHandle::id()) function.
 #[cfg_attr(docsrs, doc(cfg(all(feature = "rt"))))]
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-pub struct Id(pub(crate) NonZeroU64);
+pub struct Id {
+    global_id: NonZeroU64,
+    pub(crate) local_id: NonZeroU64,
+}
 
 /// Returns the [`Id`] of the currently running task.
 ///
@@ -49,32 +100,18 @@ pub fn try_id() -> Option<Id> {
 
 impl fmt::Display for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        write!(f, "{}::{}", self.global_id, self.local_id)
     }
 }
 
 impl Id {
-    pub(crate) fn next() -> Self {
-        use crate::loom::sync::atomic::Ordering::Relaxed;
-        use crate::loom::sync::atomic::StaticAtomicU64;
-
-        #[cfg(all(test, loom))]
-        crate::loom::lazy_static! {
-            static ref NEXT_ID: StaticAtomicU64 = StaticAtomicU64::new(1);
-        }
-
-        #[cfg(not(all(test, loom)))]
-        static NEXT_ID: StaticAtomicU64 = StaticAtomicU64::new(1);
-
-        loop {
-            let id = NEXT_ID.fetch_add(1, Relaxed);
-            if let Some(id) = NonZeroU64::new(id) {
-                return Self(id);
-            }
-        }
+    // TODO(i.Erin)
+    pub(crate) fn next() -> Id {
+        IdProvider::new_id()
     }
 
+    // TODO(i.Erin) replace with as_u128
     pub(crate) fn as_u64(&self) -> u64 {
-        self.0.get()
+        self.global_id.get()
     }
 }

@@ -1,5 +1,6 @@
+use crate::runtime::task;
 use crate::runtime::BOX_FUTURE_THRESHOLD;
-use crate::task::JoinHandle;
+use crate::task::{IdProvider, JoinHandle};
 use crate::util::trace::SpawnMeta;
 
 use std::future::Future;
@@ -169,20 +170,21 @@ cfg_rt! {
         F::Output: Send + 'static,
     {
         let fut_size = std::mem::size_of::<F>();
+        let id = task::Id::next();
         if fut_size > BOX_FUTURE_THRESHOLD {
-            spawn_inner(Box::pin(future), SpawnMeta::new_unnamed(fut_size))
+            spawn_inner(Box::pin(future), SpawnMeta::new_unnamed(fut_size), id)
         } else {
-            spawn_inner(future, SpawnMeta::new_unnamed(fut_size))
+            spawn_inner(future, SpawnMeta::new_unnamed(fut_size), id)
         }
     }
 
     #[track_caller]
-    pub(super) fn spawn_inner<T>(future: T, meta: SpawnMeta<'_>) -> JoinHandle<T::Output>
+    pub(super) fn spawn_inner<T>(future: T, meta: SpawnMeta<'_>, id: task::Id) -> JoinHandle<T::Output>
     where
         T: Future + Send + 'static,
         T::Output: Send + 'static,
     {
-        use crate::runtime::{context, task};
+        use crate::runtime::context;
 
         #[cfg(all(
             tokio_unstable,
@@ -196,7 +198,6 @@ cfg_rt! {
             )
         ))]
         let future = task::trace::Trace::root(future);
-        let id = task::Id::next();
         let task = crate::util::trace::task(future, "task", meta, id.as_u64());
 
         match context::with_current(|handle| handle.spawn(task, id)) {
@@ -207,11 +208,15 @@ cfg_rt! {
 
     /// TODO(i.Erin)
     #[derive(Debug)]
-    pub struct SpawnGroup;
+    pub struct SpawnGroup {
+        id_provider: task::IdProvider,
+    }
 
     /// TODO(i.Erin)
     pub fn group() -> SpawnGroup {
-        SpawnGroup
+        SpawnGroup {
+            id_provider: IdProvider::new(),
+        }
     }
 
     impl SpawnGroup {
@@ -222,10 +227,11 @@ cfg_rt! {
             F::Output: Send + 'static,
         {
             let fut_size = std::mem::size_of::<F>();
+            let id = self.id_provider.next_id();
             if fut_size > BOX_FUTURE_THRESHOLD {
-                spawn_inner(Box::pin(future), SpawnMeta::new_unnamed(fut_size))
+                spawn_inner(Box::pin(future), SpawnMeta::new_unnamed(fut_size), id)
             } else {
-                spawn_inner(future, SpawnMeta::new_unnamed(fut_size))
+                spawn_inner(future, SpawnMeta::new_unnamed(fut_size), id)
             }
         }
     }

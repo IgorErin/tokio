@@ -90,10 +90,11 @@ impl<'a> Builder<'a> {
         Fut::Output: Send + 'static,
     {
         let fut_size = mem::size_of::<Fut>();
+        let id = super::Id::next();
         Ok(if fut_size > BOX_FUTURE_THRESHOLD {
-            super::spawn::spawn_inner(Box::pin(future), SpawnMeta::new(self.name, fut_size))
+            super::spawn::spawn_inner(Box::pin(future), SpawnMeta::new(self.name, fut_size), id)
         } else {
-            super::spawn::spawn_inner(future, SpawnMeta::new(self.name, fut_size))
+            super::spawn::spawn_inner(future, SpawnMeta::new(self.name, fut_size), id)
         })
     }
 
