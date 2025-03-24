@@ -12,6 +12,8 @@ macro_rules! rt_test {
 
             #[cfg(not(target_os="wasi"))]
             const NUM_WORKERS: usize = 1;
+            #[cfg(not(target_os="wasi"))]
+            const NUM_GROUPS: usize = 1;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_current_thread()
@@ -27,10 +29,12 @@ macro_rules! rt_test {
             $($t)*
 
             const NUM_WORKERS: usize = 4;
+            const NUM_GROUPS: usize = 1;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(4)
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -43,11 +47,12 @@ macro_rules! rt_test {
             $($t)*
 
             const NUM_WORKERS: usize = 4;
+            const NUM_GROUPS: usize = 2;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(4)
-                    .worker_groups(2)
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -60,11 +65,12 @@ macro_rules! rt_test {
             $($t)*
 
             const NUM_WORKERS: usize = 4;
+            const NUM_GROUPS: usize = 4;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(4)
-                    .worker_groups(4)
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -77,10 +83,12 @@ macro_rules! rt_test {
             $($t)*
 
             const NUM_WORKERS: usize = 1;
+            const NUM_GROUPS: usize = 1;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(1)
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -93,11 +101,12 @@ macro_rules! rt_test {
             $($t)*
 
             const NUM_WORKERS: usize = 1;
+            const NUM_GROUPS: usize = 2;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(1)
-                    .worker_groups(2)
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -110,11 +119,12 @@ macro_rules! rt_test {
             $($t)*
 
             const NUM_WORKERS: usize = 1;
+            const NUM_GROUPS: usize = 8;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(1)
-                    .worker_groups(8)
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -128,10 +138,12 @@ macro_rules! rt_test {
             $($t)*
 
             const NUM_WORKERS: usize = 4;
+            const NUM_GROUPS: usize = 1;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(4)
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -145,10 +157,12 @@ macro_rules! rt_test {
             $($t)*
 
             const NUM_WORKERS: usize = 1;
+            const NUM_GROUPS: usize = 1;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(1)
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -1509,5 +1523,119 @@ rt_test! {
         .unwrap();
 
         assert!(recv.recv().unwrap());
+    }
+
+    #[test]
+    #[cfg(not(target_os="wasi"))]
+    fn groups_driven_by_diff_threads() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        if NUM_GROUPS <= 1 {
+            return;
+        }
+
+        {
+            let rt = rt();
+            let _gurad = rt.enter();
+            let mut all_threads = Vec::with_capacity(NUM_WORKERS * NUM_GROUPS);
+            for group in 0..NUM_GROUPS {
+                let threads = get_group_threads(group);
+                all_threads.extend_from_slice(&threads);
+            }
+
+            assert_eq!(all_threads.len(), NUM_WORKERS * NUM_GROUPS);
+            for thread in all_threads.iter() {
+                let same = all_threads.iter().filter(|t| t == &thread).count();
+                assert_eq!(same, 1, "{:?}", all_threads);
+            }
+        }
+
+        fn get_group_threads(group: usize) -> Vec<std::thread::ThreadId>  {
+            let (tx, rx) = std::sync::mpsc::sync_channel(0);
+            let counter = Arc::new(AtomicUsize::new(0));
+
+            for _ in 0..NUM_WORKERS {
+                let counter = Arc::clone(&counter);
+                let tx = tx.clone();
+
+                tokio::spawn_into(async move {
+                    counter.fetch_add(1, SeqCst);
+                    tx.send(std::thread::current().id()).unwrap();
+                }, group);
+            }
+
+            while counter.load(SeqCst) != NUM_WORKERS {
+                std::hint::spin_loop()
+            }
+
+            (0..NUM_WORKERS).map(|_| rx.recv().unwrap()).collect()
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_os="wasi"))]
+    fn groups_are_independent() {
+        if NUM_GROUPS <= 1 {
+            return;
+        }
+
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+
+        for fst_group in 0..NUM_GROUPS {
+            for snd_group in 0..NUM_GROUPS {
+                if fst_group == snd_group {
+                    continue;
+                }
+
+                use tokio::sync::mpsc;
+
+                let rt = rt();
+                rt.block_on(async {
+                    let groups_pollers: Vec<_> = (0..NUM_GROUPS).map(block_group).collect();
+
+                    groups_pollers[fst_group].recv().unwrap();
+                    groups_pollers[snd_group].recv().unwrap();
+
+                    let (tx, mut rx) = mpsc::channel(1);
+
+                    tokio::spawn_into(async move {
+                        tx.send(()).await.unwrap();
+                    }, fst_group);
+
+                    tokio::spawn_into(async move {
+                        rx.recv().await.unwrap();
+                    }, snd_group).await.unwrap();
+
+                    for (ind, chan) in groups_pollers.iter().enumerate() {
+                        let mut expected_len = NUM_WORKERS;
+                        if ind == fst_group || ind == snd_group {
+                            expected_len -= 1;
+                        }
+
+                        let actual_len = chan.iter().count();
+                        assert_eq!(actual_len, expected_len);
+                    }
+                });
+            }
+        }
+
+        fn block_group(group: usize) -> std::sync::mpsc::Receiver<()> {
+            let (tx, rx) = std::sync::mpsc::sync_channel(0);
+            let counter = Arc::new(AtomicUsize::new(0));
+
+            for _ in 0..NUM_WORKERS {
+                let counter = Arc::clone(&counter);
+                let tx = tx.clone();
+                tokio::spawn_into(async move {
+                    counter.fetch_add(1, SeqCst);
+                    tx.send(()).unwrap();
+                }, group);
+            }
+
+            while counter.load(SeqCst) != NUM_WORKERS {
+                std::hint::spin_loop();
+            }
+
+            rx
+        }
     }
 }
