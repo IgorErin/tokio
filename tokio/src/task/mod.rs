@@ -274,6 +274,7 @@ cfg_rt! {
 
     mod spawn;
     pub use spawn::spawn;
+    pub use spawn::{group, SpawnGroup};
 
     cfg_rt_multi_thread! {
         pub use blocking::block_in_place;
@@ -309,7 +310,7 @@ cfg_rt! {
     #[cfg(tokio_unstable)]
     pub mod join_set;
 
-    pub use crate::runtime::task::{Id, id, try_id};
+    pub use crate::runtime::task::{Id, IdProvider, id, try_id};
 
     cfg_trace! {
         mod builder;

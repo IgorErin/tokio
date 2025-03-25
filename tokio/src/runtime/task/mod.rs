@@ -194,7 +194,7 @@ use self::harness::Harness;
 
 mod id;
 #[cfg_attr(not(tokio_unstable), allow(unreachable_pub, unused_imports))]
-pub use id::{id, try_id, Id};
+pub use id::{id, try_id, Id, IdProvider};
 
 #[cfg(feature = "rt")]
 mod abort;
@@ -568,6 +568,6 @@ unsafe impl<S> sharded_list::ShardedListItem for Task<S> {
     unsafe fn get_shard_id(target: NonNull<Self::Target>) -> usize {
         // SAFETY: The caller guarantees that `target` points at a valid task.
         let task_id = unsafe { Header::get_id(target) };
-        task_id.0.get() as usize
+        task_id.local_id.get() as usize
     }
 }

@@ -316,40 +316,6 @@ jobs:
           # the unstable cfg to RustDoc
           RUSTDOCFLAGS: --cfg tokio_unstable
 
-  test-unstable-taskdump:
-    name: test tokio full --unstable --taskdump
-    needs: basics
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust ${{ env.rust_stable }}
-        uses: dtolnay/rust-toolchain@stable
-        with:
-            toolchain: ${{ env.rust_stable }}
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-
-      - uses: Swatinem/rust-cache@v2
-      # Run `tokio` with "unstable" and "taskdump" cfg flags.
-      - name: test tokio full --cfg unstable --cfg taskdump
-        run: |
-          set -euxo pipefail
-          cargo nextest run --all-features
-          cargo test --doc --all-features
-        working-directory: tokio
-        env:
-          RUSTFLAGS: --cfg tokio_unstable --cfg tokio_taskdump -Dwarnings
-          # in order to run doctests for unstable features, we must also pass
-          # the unstable cfg to RustDoc
-          RUSTDOCFLAGS: --cfg tokio_unstable --cfg tokio_taskdump
-
   check-unstable-mt-counters:
     name: check tokio full --internal-mt-counters
     needs: basics
@@ -469,18 +435,6 @@ jobs:
           # Ignore `trybuild` errors as they are irrelevant and flaky on nightly
           TRYBUILD: overwrite
 
-  semver:
-    name: semver
-    needs: basics
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check semver
-        uses: obi1kenobi/cargo-semver-checks-action@v2
-        with:
-          rust-toolchain: ${{ env.rust_stable }}
-          release-type: minor
-
   cross-check:
     name: cross-check
     needs: basics
@@ -538,14 +492,12 @@ jobs:
         include:
           - target: i686-unknown-linux-gnu
             os: ubuntu-latest
-            rustflags: --cfg tokio_taskdump
           - target: armv5te-unknown-linux-gnueabi
             os: ubuntu-latest
           - target: armv7-unknown-linux-gnueabihf
             os: ubuntu-22.04-arm # TODO: update to 24.04 when https://github.com/rust-lang/rust/issues/135867 solved
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04-arm # TODO: update to 24.04 when https://github.com/rust-lang/rust/issues/135867 solved
-            rustflags: --cfg tokio_taskdump
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust stable
@@ -582,14 +534,12 @@ jobs:
         include:
           - target: i686-unknown-linux-gnu
             os: ubuntu-latest
-            rustflags: --cfg tokio_taskdump
           - target: armv5te-unknown-linux-gnueabi
             os: ubuntu-latest
           - target: armv7-unknown-linux-gnueabihf
             os: ubuntu-22.04-arm # TODO: update to 24.04 when https://github.com/rust-lang/rust/issues/135867 solved
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04-arm # TODO: update to 24.04 when https://github.com/rust-lang/rust/issues/135867 solved
-            rustflags: --cfg tokio_taskdump
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust stable
@@ -652,7 +602,7 @@ jobs:
           cargo test --doc -Zbuild-std --target target-specs/i686-unknown-linux-gnu.json -p tokio --all-features
         env:
           RUST_TEST_THREADS: 1
-          RUSTFLAGS: --cfg tokio_unstable --cfg tokio_taskdump -Dwarnings --cfg tokio_no_tuning_tests
+          RUSTFLAGS: --cfg tokio_unstable -Dwarnings --cfg tokio_no_tuning_tests
 
   no-atomic-u64-check:
     name: Check tokio --feature-powerset --depth 2 on i686-unknown-linux-gnu without AtomicU64
@@ -677,7 +627,7 @@ jobs:
       - name: Check
         run: cargo hack check -Zbuild-std --target target-specs/i686-unknown-linux-gnu.json -p tokio --feature-powerset --depth 2 --keep-going
         env:
-          RUSTFLAGS: --cfg tokio_unstable --cfg tokio_taskdump -Dwarnings
+          RUSTFLAGS: --cfg tokio_unstable -Dwarnings
 
   features:
     name: features ${{ matrix.name }}
@@ -690,7 +640,7 @@ jobs:
           # Try with unstable feature flags
           - { name: "--unstable", rustflags: "--cfg tokio_unstable -Dwarnings" }
           # Try with unstable and taskdump feature flags
-          - { name: "--unstable --taskdump", rustflags: "--cfg tokio_unstable -Dwarnings --cfg tokio_taskdump" }
+          - { name: "--unstable", rustflags: "--cfg tokio_unstable -Dwarnings" }
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust ${{ env.rust_nightly }}
@@ -746,7 +696,7 @@ jobs:
           cargo hack check --all-features --ignore-private
       - name: "check --all-features --unstable -Z minimal-versions"
         env:
-          RUSTFLAGS: --cfg tokio_unstable --cfg tokio_taskdump -Dwarnings
+          RUSTFLAGS: --cfg tokio_unstable -Dwarnings
         run: |
           # Remove dev-dependencies from Cargo.toml to prevent the next `cargo update`
           # from determining minimal versions based on dev-dependencies.
@@ -798,8 +748,6 @@ jobs:
         run:
           - os: windows-latest
           - os: ubuntu-latest
-            RUSTFLAGS: --cfg tokio_taskdump
-            RUSTDOCFLAGS: --cfg tokio_taskdump
 
     steps:
       - uses: actions/checkout@v4
