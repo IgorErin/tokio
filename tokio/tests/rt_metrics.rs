@@ -72,7 +72,7 @@ fn global_queue_depth_multi_thread() {
         if let Ok(_blocking_tasks) = try_block_threaded(&rt) {
             for i in 0..10 {
                 assert_eq!(i, metrics.global_queue_depth(0));
-                rt.spawn_into(async {}, 0);
+                rt.spawn_into(0, async {});
             }
 
             return;
@@ -93,13 +93,10 @@ fn try_block_threaded(rt: &Runtime) -> Result<Vec<mpsc::Sender<()>>, mpsc::RecvT
             let (task, barrier) = mpsc::channel();
 
             // Spawn a task per runtime worker to block it.
-            rt.spawn_into(
-                async move {
-                    tx.send(()).ok();
-                    barrier.recv().ok();
-                },
-                worker % rt.metrics().num_groups(),
-            );
+            rt.spawn_into(worker % rt.metrics().num_groups(), async move {
+                tx.send(()).ok();
+                barrier.recv().ok();
+            });
 
             task
         })

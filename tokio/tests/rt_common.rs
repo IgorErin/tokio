@@ -859,20 +859,20 @@ rt_test! {
                 let flag = flag.clone();
                 let barrier = barrier.clone();
 
-                tokio::spawn_into(async move {
+                tokio::spawn_into(GROUP, async move {
                     barrier.wait();
 
                     while !flag.load(SeqCst) {
                         std::thread::sleep(std::time::Duration::from_millis(1));
                     }
-                }, GROUP);
+                });
             }
 
             barrier.wait();
 
             let (fail_test, fail_test_recv) = oneshot::channel::<()>();
             let flag_clone = flag.clone();
-            let jh = tokio::spawn_into(async move {
+            let jh = tokio::spawn_into(GROUP, async move {
                 // Create a TCP listener
                 let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
                 let addr = listener.local_addr().unwrap();
@@ -903,7 +903,7 @@ rt_test! {
                         flag_clone.store(true, SeqCst);
                     }
                 );
-            }, GROUP);
+            });
 
             // Wait until the spawned task completes or fails. If no message is
             // sent on `fail_test`, then the test succeeds. Otherwise, it fails.
@@ -1557,10 +1557,10 @@ rt_test! {
                 let counter = Arc::clone(&counter);
                 let tx = tx.clone();
 
-                tokio::spawn_into(async move {
+                tokio::spawn_into(group, async move {
                     counter.fetch_add(1, SeqCst);
                     tx.send(std::thread::current().id()).unwrap();
-                }, group);
+                });
             }
 
             while counter.load(SeqCst) != NUM_WORKERS {
@@ -1597,13 +1597,13 @@ rt_test! {
 
                     let (tx, mut rx) = mpsc::channel(1);
 
-                    tokio::spawn_into(async move {
+                    tokio::spawn_into(fst_group, async move {
                         tx.send(()).await.unwrap();
-                    }, fst_group);
+                    });
 
-                    tokio::spawn_into(async move {
+                    tokio::spawn_into(snd_group, async move {
                         rx.recv().await.unwrap();
-                    }, snd_group).await.unwrap();
+                    }).await.unwrap();
 
                     for (ind, chan) in groups_pollers.iter().enumerate() {
                         let mut expected_len = NUM_WORKERS;
@@ -1625,10 +1625,10 @@ rt_test! {
             for _ in 0..NUM_WORKERS {
                 let counter = Arc::clone(&counter);
                 let tx = tx.clone();
-                tokio::spawn_into(async move {
+                tokio::spawn_into(group, async move {
                     counter.fetch_add(1, SeqCst);
                     tx.send(()).unwrap();
-                }, group);
+                });
             }
 
             while counter.load(SeqCst) != NUM_WORKERS {

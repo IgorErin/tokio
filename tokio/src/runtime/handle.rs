@@ -200,7 +200,7 @@ impl Handle {
 
     /// TODO(i.Erin)
     #[track_caller]
-    pub fn spawn_into<F>(&self, future: F, group: usize) -> JoinHandle<F::Output>
+    pub fn spawn_into<F>(&self, group: usize, future: F) -> JoinHandle<F::Output>
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,
