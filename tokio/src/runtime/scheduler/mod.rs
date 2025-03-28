@@ -138,19 +138,24 @@ cfg_rt! {
             }
         }
 
-        pub(crate) fn spawn<F>(&self, future: F, id: Id) -> JoinHandle<F::Output>
+        pub(crate) fn spawn<F>(&self, future: F, id: Id, group: Option<usize>) -> JoinHandle<F::Output>
         where
             F: Future + Send + 'static,
             F::Output: Send + 'static,
         {
             match self {
-                Handle::CurrentThread(h) => current_thread::Handle::spawn(h, future, id),
-
+                Handle::CurrentThread(h) => {
+                    assert!(group.is_none() || group == Some(0));
+                    current_thread::Handle::spawn(h, future, id)
+                },
                 #[cfg(feature = "rt-multi-thread")]
-                Handle::MultiThread(h) => multi_thread::Handle::spawn(h, future, id),
+                Handle::MultiThread(h) => multi_thread::Handle::spawn(h, future, id, group),
 
                 #[cfg(all(tokio_unstable, feature = "rt-multi-thread"))]
-                Handle::MultiThreadAlt(h) => multi_thread_alt::Handle::spawn(h, future, id),
+                Handle::MultiThreadAlt(h) => {
+                    assert!(group.is_none() || group == Some(0));
+                    multi_thread_alt::Handle::spawn(h, future, id)
+                },
             }
         }
 
@@ -229,12 +234,28 @@ cfg_rt! {
             }
         }
 
+        pub (crate) fn num_groups(&self) -> usize {
+            match self {
+                Handle::CurrentThread(_) => 1,
+                #[cfg(feature = "rt-multi-thread")]
+                Handle::MultiThread(handle) => handle.num_groups(),
+                #[cfg(all(tokio_unstable, feature = "rt-multi-thread"))]
+                Handle::MultiThreadAlt(_) => 1,
+            }
+        }
+
         pub(crate) fn num_alive_tasks(&self) -> usize {
             match_flavor!(self, Handle(handle) => handle.num_alive_tasks())
         }
 
-        pub(crate) fn injection_queue_depth(&self) -> usize {
-            match_flavor!(self, Handle(handle) => handle.injection_queue_depth())
+        pub(crate) fn injection_queue_depth(&self, _group: usize) -> usize {
+            match self {
+                Handle::CurrentThread(handle) => handle.injection_queue_depth(),
+                #[cfg(feature = "rt-multi-thread")]
+                Handle::MultiThread(handle) => handle.injection_queue_depth(_group),
+                #[cfg(all(tokio_unstable, feature = "rt-multi-thread"))]
+                Handle::MultiThreadAlt(handle) => handle.injection_queue_depth(),
+            }
         }
     }
 

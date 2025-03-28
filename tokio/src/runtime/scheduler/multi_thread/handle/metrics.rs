@@ -6,15 +6,19 @@ cfg_unstable_metrics! {
 
 impl Handle {
     pub(crate) fn num_workers(&self) -> usize {
-        self.shared.worker_metrics.len()
+        self.shared.group_size
+    }
+
+    pub(crate) fn num_groups(&self) -> usize {
+        self.shared.groups.len()
     }
 
     pub(crate) fn num_alive_tasks(&self) -> usize {
         self.shared.owned.num_alive_tasks()
     }
 
-    pub(crate) fn injection_queue_depth(&self) -> usize {
-        self.shared.injection_queue_depth()
+    pub(crate) fn injection_queue_depth(&self, group: usize) -> usize {
+        self.shared.injection_queue_depth(group)
     }
 
     cfg_unstable_metrics! {
@@ -40,7 +44,12 @@ impl Handle {
         }
 
         pub(crate) fn worker_metrics(&self, worker: usize) -> &WorkerMetrics {
-            &self.shared.worker_metrics[worker]
+            let group_size = self.shared.group_size;
+
+            let group = worker / group_size;
+            let worker = worker % group_size;
+
+            &self.shared.groups[group].worker_metrics[worker]
         }
 
         pub(crate) fn worker_local_queue_depth(&self, worker: usize) -> usize {

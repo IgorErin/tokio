@@ -1,7 +1,7 @@
 //! Coordinates idling workers
 
 use crate::loom::sync::atomic::AtomicUsize;
-use crate::runtime::scheduler::multi_thread::Shared;
+use crate::runtime::scheduler::multi_thread::Group;
 
 use std::fmt;
 use std::sync::atomic::Ordering::{self, SeqCst};
@@ -48,7 +48,7 @@ impl Idle {
 
     /// If there are no workers actively searching, returns the index of a
     /// worker currently sleeping.
-    pub(super) fn worker_to_notify(&self, shared: &Shared) -> Option<usize> {
+    pub(super) fn worker_to_notify(&self, shared: &Group) -> Option<usize> {
         // If at least one worker is spinning, work being notified will
         // eventually be found. A searching thread will find **some** work and
         // notify another worker, eventually leading to our work being found.
@@ -85,7 +85,7 @@ impl Idle {
     /// work.
     pub(super) fn transition_worker_to_parked(
         &self,
-        shared: &Shared,
+        shared: &Group,
         worker: usize,
         is_searching: bool,
     ) -> bool {
@@ -126,7 +126,7 @@ impl Idle {
     /// within the worker's park routine.
     ///
     /// Returns `true` if the worker was parked before calling the method.
-    pub(super) fn unpark_worker_by_id(&self, shared: &Shared, worker_id: usize) -> bool {
+    pub(super) fn unpark_worker_by_id(&self, shared: &Group, worker_id: usize) -> bool {
         let mut lock = shared.synced.lock();
         let sleepers = &mut lock.idle.sleepers;
 
@@ -145,7 +145,7 @@ impl Idle {
     }
 
     /// Returns `true` if `worker_id` is contained in the sleep set.
-    pub(super) fn is_parked(&self, shared: &Shared, worker_id: usize) -> bool {
+    pub(super) fn is_parked(&self, shared: &Group, worker_id: usize) -> bool {
         let lock = shared.synced.lock();
         lock.idle.sleepers.contains(&worker_id)
     }

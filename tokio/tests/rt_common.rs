@@ -12,6 +12,8 @@ macro_rules! rt_test {
 
             #[cfg(not(target_os="wasi"))]
             const NUM_WORKERS: usize = 1;
+            #[cfg(not(target_os="wasi"))]
+            const NUM_GROUPS: usize = 1;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_current_thread()
@@ -27,10 +29,48 @@ macro_rules! rt_test {
             $($t)*
 
             const NUM_WORKERS: usize = 4;
+            const NUM_GROUPS: usize = 1;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(4)
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .into()
+            }
+        }
+
+        #[cfg(not(target_os = "wasi"))] // Wasi doesn't support threads
+        mod threaded_scheduler_4_threads_2_groups {
+            $($t)*
+
+            const NUM_WORKERS: usize = 4;
+            const NUM_GROUPS: usize = 2;
+
+            fn rt() -> Arc<Runtime> {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .into()
+            }
+        }
+
+        #[cfg(not(target_os = "wasi"))] // Wasi doesn't support threads
+        mod threaded_scheduler_4_threads_4_groups {
+            $($t)*
+
+            const NUM_WORKERS: usize = 4;
+            const NUM_GROUPS: usize = 4;
+
+            fn rt() -> Arc<Runtime> {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -43,10 +83,48 @@ macro_rules! rt_test {
             $($t)*
 
             const NUM_WORKERS: usize = 1;
+            const NUM_GROUPS: usize = 1;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(1)
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .into()
+            }
+        }
+
+        #[cfg(not(target_os = "wasi"))] // Wasi doesn't support threads
+        mod threaded_scheduler_1_thread_2_groups {
+            $($t)*
+
+            const NUM_WORKERS: usize = 1;
+            const NUM_GROUPS: usize = 2;
+
+            fn rt() -> Arc<Runtime> {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .into()
+            }
+        }
+
+        #[cfg(not(target_os = "wasi"))] // Wasi doesn't support threads
+        mod threaded_scheduler_1_thread_8_group {
+            $($t)*
+
+            const NUM_WORKERS: usize = 1;
+            const NUM_GROUPS: usize = 8;
+
+            fn rt() -> Arc<Runtime> {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -60,10 +138,12 @@ macro_rules! rt_test {
             $($t)*
 
             const NUM_WORKERS: usize = 4;
+            const NUM_GROUPS: usize = 1;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(4)
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -77,10 +157,12 @@ macro_rules! rt_test {
             $($t)*
 
             const NUM_WORKERS: usize = 1;
+            const NUM_GROUPS: usize = 1;
 
             fn rt() -> Arc<Runtime> {
                 tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(1)
+                    .worker_threads(NUM_WORKERS)
+                    .worker_groups(NUM_GROUPS)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -768,15 +850,17 @@ rt_test! {
 
         let flag = Arc::new(AtomicBool::new(false));
         let barrier = Arc::new(Barrier::new(NUM_WORKERS));
+        const GROUP: usize = 0;
 
         rt.block_on(async {
+            let group = tokio::group(GROUP);
             // Make sure other workers cannot steal tasks
             #[allow(clippy::reversed_empty_ranges)]
             for _ in 0..(NUM_WORKERS-1) {
                 let flag = flag.clone();
                 let barrier = barrier.clone();
 
-                tokio::spawn(async move {
+                group.spawn(async move {
                     barrier.wait();
 
                     while !flag.load(SeqCst) {
@@ -789,7 +873,7 @@ rt_test! {
 
             let (fail_test, fail_test_recv) = oneshot::channel::<()>();
             let flag_clone = flag.clone();
-            let jh = tokio::spawn(async move {
+            let jh = group.spawn(async move {
                 // Create a TCP listener
                 let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
                 let addr = listener.local_addr().unwrap();
@@ -1440,5 +1524,119 @@ rt_test! {
         .unwrap();
 
         assert!(recv.recv().unwrap());
+    }
+
+    #[test]
+    #[cfg(not(target_os="wasi"))]
+    fn groups_driven_by_diff_threads() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        if NUM_GROUPS <= 1 {
+            return;
+        }
+
+        {
+            let rt = rt();
+            let _gurad = rt.enter();
+            let mut all_threads = Vec::with_capacity(NUM_WORKERS * NUM_GROUPS);
+            for group in 0..NUM_GROUPS {
+                let threads = get_group_threads(tokio::group(group));
+                all_threads.extend_from_slice(&threads);
+            }
+
+            assert_eq!(all_threads.len(), NUM_WORKERS * NUM_GROUPS);
+            for thread in all_threads.iter() {
+                let same = all_threads.iter().filter(|t| t == &thread).count();
+                assert_eq!(same, 1, "{:?}", all_threads);
+            }
+        }
+
+        fn get_group_threads(group: tokio::SpawnGroup) -> Vec<std::thread::ThreadId>  {
+            let (tx, rx) = std::sync::mpsc::sync_channel(0);
+            let counter = Arc::new(AtomicUsize::new(0));
+
+            for _ in 0..NUM_WORKERS {
+                let counter = Arc::clone(&counter);
+                let tx = tx.clone();
+
+                group.spawn(async move {
+                    counter.fetch_add(1, SeqCst);
+                    tx.send(std::thread::current().id()).unwrap();
+                });
+            }
+
+            while counter.load(SeqCst) != NUM_WORKERS {
+                std::hint::spin_loop()
+            }
+
+            (0..NUM_WORKERS).map(|_| rx.recv().unwrap()).collect()
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_os="wasi"))]
+    fn groups_are_independent() {
+        if NUM_GROUPS <= 1 {
+            return;
+        }
+
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+
+        for fst_group in 0..NUM_GROUPS {
+            for snd_group in 0..NUM_GROUPS {
+                if fst_group == snd_group {
+                    continue;
+                }
+
+                use tokio::sync::mpsc;
+
+                let rt = rt();
+                rt.block_on(async {
+                    let groups_pollers: Vec<_> = (0..NUM_GROUPS).map(tokio::group).map(block_group).collect();
+
+                    groups_pollers[fst_group].recv().unwrap();
+                    groups_pollers[snd_group].recv().unwrap();
+
+                    let (tx, mut rx) = mpsc::channel(1);
+
+                    tokio::group(fst_group).spawn(async move {
+                        tx.send(()).await.unwrap();
+                    });
+
+                    tokio::group(snd_group).spawn(async move {
+                        rx.recv().await.unwrap();
+                    }).await.unwrap();
+
+                    for (ind, chan) in groups_pollers.iter().enumerate() {
+                        let mut expected_len = NUM_WORKERS;
+                        if ind == fst_group || ind == snd_group {
+                            expected_len -= 1;
+                        }
+
+                        let actual_len = chan.iter().count();
+                        assert_eq!(actual_len, expected_len);
+                    }
+                });
+            }
+        }
+
+        fn block_group(group: tokio::SpawnGroup) -> std::sync::mpsc::Receiver<()> {
+            let (tx, rx) = std::sync::mpsc::sync_channel(0);
+            let counter = Arc::new(AtomicUsize::new(0));
+
+            for _ in 0..NUM_WORKERS {
+                let counter = Arc::clone(&counter);
+                let tx = tx.clone();
+                group.spawn(async move {
+                    counter.fetch_add(1, SeqCst);
+                    tx.send(()).unwrap();
+                });
+            }
+
+            while counter.load(SeqCst) != NUM_WORKERS {
+                std::hint::spin_loop();
+            }
+
+            rx
+        }
     }
 }

@@ -30,6 +30,36 @@ macro_rules! multi_threaded_rt_test {
             }
         }
 
+        mod threaded_scheduler_4_threads_2_groups_only {
+            use super::*;
+
+            $($t)*
+
+            fn rt() -> Runtime {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(4)
+                    .worker_groups(2)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            }
+        }
+
+        mod threaded_scheduler_4_threads_4_groups_only {
+            use super::*;
+
+            $($t)*
+
+            fn rt() -> Runtime {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(4)
+                    .worker_groups(4)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            }
+        }
+
         mod threaded_scheduler_1_thread_only {
             use super::*;
 
@@ -38,6 +68,21 @@ macro_rules! multi_threaded_rt_test {
             fn rt() -> Runtime {
                 tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(1)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            }
+        }
+
+        mod threaded_scheduler_1_thread_8_groups_only {
+            use super::*;
+
+            $($t)*
+
+            fn rt() -> Runtime {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .worker_groups(8)
                     .enable_all()
                     .build()
                     .unwrap()
@@ -76,6 +121,36 @@ macro_rules! rt_test {
             }
         }
 
+        mod threaded_scheduler_4_threads_2_groups {
+            use super::*;
+
+            $($t)*
+
+            fn rt() -> Runtime {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(4)
+                    .worker_groups(2)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            }
+        }
+
+        mod threaded_scheduler_4_threads_4_groups {
+            use super::*;
+
+            $($t)*
+
+            fn rt() -> Runtime {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(4)
+                    .worker_groups(4)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            }
+        }
+
         mod threaded_scheduler_1_thread {
             use super::*;
 
@@ -84,6 +159,36 @@ macro_rules! rt_test {
             fn rt() -> Runtime {
                 tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(1)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            }
+        }
+
+        mod threaded_scheduler_1_thread_2_groups {
+            use super::*;
+
+            $($t)*
+
+            fn rt() -> Runtime {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .worker_groups(2)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            }
+        }
+
+        mod threaded_scheduler_1_thread_8_groups {
+            use super::*;
+
+            $($t)*
+
+            fn rt() -> Runtime {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .worker_groups(8)
                     .enable_all()
                     .build()
                     .unwrap()

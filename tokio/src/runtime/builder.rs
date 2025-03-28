@@ -64,6 +64,8 @@ pub struct Builder {
     /// Only used when not using the current-thread executor.
     worker_threads: Option<usize>,
 
+    worker_groups: Option<usize>,
+
     /// Cap on thread usage.
     max_blocking_threads: usize,
 
@@ -296,6 +298,7 @@ impl Builder {
             // Read from environment variable first in multi-threaded mode.
             // Default to lazy auto-detection (one thread per CPU core)
             worker_threads: None,
+            worker_groups: None,
 
             max_blocking_threads: 512,
 
@@ -425,6 +428,14 @@ impl Builder {
     pub fn worker_threads(&mut self, val: usize) -> &mut Self {
         assert!(val > 0, "Worker threads cannot be set to 0");
         self.worker_threads = Some(val);
+        self
+    }
+
+    /// TODO(i.Erin)
+    #[track_caller]
+    pub fn worker_groups(&mut self, val: usize) -> &mut Self {
+        assert!(val > 0, "Worker groups cannot be set to 0");
+        self.worker_groups = Some(val);
         self
     }
 
@@ -1641,12 +1652,13 @@ cfg_rt_multi_thread! {
             use crate::runtime::scheduler::{self, MultiThread};
 
             let worker_threads = self.worker_threads.unwrap_or_else(num_cpus);
+            let worker_groups = self.worker_groups.unwrap_or(1);
 
-            let (driver, driver_handle) = driver::Driver::new(self.get_cfg(worker_threads))?;
+            let (driver, driver_handle) = driver::Driver::new(self.get_cfg(worker_threads * worker_groups))?;
 
             // Create the blocking pool
             let blocking_pool =
-                blocking::create_blocking_pool(self, self.max_blocking_threads + worker_threads);
+                blocking::create_blocking_pool(self, self.max_blocking_threads + worker_threads * worker_groups);
             let blocking_spawner = blocking_pool.spawner().clone();
 
             // Generate a rng seed for this runtime.
@@ -1655,6 +1667,7 @@ cfg_rt_multi_thread! {
 
             let (scheduler, handle, launch) = MultiThread::new(
                 worker_threads,
+                worker_groups,
                 driver,
                 driver_handle,
                 blocking_spawner,
