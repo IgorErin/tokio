@@ -313,7 +313,7 @@ pub(super) fn create(
             groups: groups.into_boxed_slice(),
             group_size: size,
             shutdown_cores: Mutex::new(vec![]),
-            owned: OwnedTasks::new(size),
+            owned: OwnedTasks::new(size * worker_groups),
             config,
             scheduler_metrics: SchedulerMetrics::new(),
             _counters: Counters,
